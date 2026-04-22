@@ -1,0 +1,44 @@
+name: test-traffic
+description: Nginx server and client pods for generating network traffic
+templates:
+  - templates/netobserv/test-nginx-server_template.yaml
+  - templates/netobserv/test-nginx-client_template.yaml
+parameters:
+  SERVER_NS: test-server
+  CLIENT_NS: test-client
+  POD_NAME: client
+  OBJECT_SIZE: 100K
+  LARGE_BLOB: "no"
+  SERVICE_TYPE: NodePort
+lifecycle:
+  create: Deploy the nginx server (namespace, deployment, service, route) in test-server, then deploy the client pod in test-client that curls the server every 5 seconds
+  ready: Verify the nginx deployment in test-server has at least 1 ready replica and the client pod in test-client is Running
+  cleanup: Delete namespace test-client and namespace test-server
+---
+name: test-traffic-large
+description: Nginx server and client pods for large volume download testing
+templates:
+  - templates/netobserv/test-nginx-server_template.yaml
+  - templates/netobserv/test-nginx-client_template.yaml
+parameters:
+  SERVER_NS: test-server
+  CLIENT_NS: test-client
+  POD_NAME: client
+  OBJECT_SIZE: 100M
+  LARGE_BLOB: "yes"
+  SERVICE_TYPE: NodePort
+lifecycle:
+  create: Deploy nginx server with large blob files enabled and client pod
+  ready: Verify server and client pods are running
+  cleanup: Delete test-client and test-server namespaces
+---
+name: test-ping-pods
+description: Ping client and server pods for connection tracking tests
+template: templates/netobserv/test-ping-pods_template.yaml
+parameters:
+  SERVER_NS: test-server
+  CLIENT_NS: test-client
+lifecycle:
+  create: Deploy ping server and client pods
+  ready: Verify both ping pods are Running
+  cleanup: Delete test-client and test-server namespaces

@@ -1,0 +1,35 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: olm-subscription
+parameters:
+  - name: Name
+    description: Subscription name
+    required: true
+  - name: Namespace
+    description: Target namespace
+    required: true
+  - name: Channel
+    description: Operator channel
+    required: true
+  - name: Source
+    description: CatalogSource name
+    value: redhat-operators
+  - name: SourceNamespace
+    description: CatalogSource namespace
+    value: openshift-marketplace
+  - name: InstallPlanApproval
+    description: Install plan approval mode
+    value: Automatic
+objects:
+  - apiVersion: operators.coreos.com/v1alpha1
+    kind: Subscription
+    metadata:
+      name: ${Name}
+      namespace: ${Namespace}
+    spec:
+      channel: ${Channel}
+      name: ${Name}
+      source: ${Source}
+      sourceNamespace: ${SourceNamespace}
+      installPlanApproval: ${InstallPlanApproval}

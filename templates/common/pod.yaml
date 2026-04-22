@@ -1,0 +1,31 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: generic-pod
+parameters:
+  - name: Name
+    description: Pod name
+    required: true
+  - name: Namespace
+    description: Target namespace
+    required: true
+  - name: Image
+    description: Container image
+    required: true
+  - name: Port
+    description: Container port
+    value: "8080"
+objects:
+  - apiVersion: v1
+    kind: Pod
+    metadata:
+      name: ${Name}
+      namespace: ${Namespace}
+      labels:
+        app: ${Name}
+    spec:
+      containers:
+        - name: main
+          image: ${Image}
+          ports:
+            - containerPort: ${{Port}}

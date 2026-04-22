@@ -1,0 +1,31 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: nginx-client
+parameters:
+  - name: Name
+    description: Client pod name
+    value: nginx-client
+  - name: Namespace
+    description: Target namespace
+    required: true
+  - name: ServerHost
+    description: Server hostname or IP to curl
+    required: true
+objects:
+  - apiVersion: v1
+    kind: Pod
+    metadata:
+      name: ${Name}
+      namespace: ${Namespace}
+      labels:
+        app: ${Name}
+        role: client
+    spec:
+      containers:
+        - name: curl
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - "while true; do curl -s ${ServerHost}; sleep 5; done"

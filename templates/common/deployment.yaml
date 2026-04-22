@@ -1,0 +1,41 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: generic-deployment
+parameters:
+  - name: Name
+    description: Deployment name
+    required: true
+  - name: Namespace
+    description: Target namespace
+    required: true
+  - name: Image
+    description: Container image
+    required: true
+  - name: Replicas
+    description: Number of replicas
+    value: "1"
+  - name: Port
+    description: Container port
+    value: "8080"
+objects:
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: ${Name}
+      namespace: ${Namespace}
+    spec:
+      replicas: ${{Replicas}}
+      selector:
+        matchLabels:
+          app: ${Name}
+      template:
+        metadata:
+          labels:
+            app: ${Name}
+        spec:
+          containers:
+            - name: main
+              image: ${Image}
+              ports:
+                - containerPort: ${{Port}}

@@ -1,0 +1,20 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: operator-group
+parameters:
+  - name: Name
+    description: OperatorGroup name
+    required: true
+  - name: Namespace
+    description: Target namespace
+    required: true
+objects:
+  - apiVersion: operators.coreos.com/v1
+    kind: OperatorGroup
+    metadata:
+      name: ${Name}
+      namespace: ${Namespace}
+    spec:
+      targetNamespaces:
+        - ${Namespace}

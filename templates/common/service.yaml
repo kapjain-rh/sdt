@@ -1,0 +1,30 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: generic-service
+parameters:
+  - name: Name
+    description: Service name
+    required: true
+  - name: Namespace
+    description: Target namespace
+    required: true
+  - name: Port
+    description: Service port
+    value: "80"
+  - name: TargetPort
+    description: Target container port
+    value: "8080"
+objects:
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: ${Name}
+      namespace: ${Namespace}
+    spec:
+      selector:
+        app: ${Name}
+      ports:
+        - port: ${{Port}}
+          targetPort: ${{TargetPort}}
+          protocol: TCP

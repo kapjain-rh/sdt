@@ -1,0 +1,25 @@
+# Build output
+bin/
+sdt
+
+# Cache directory (generated at runtime)
+.sdt/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

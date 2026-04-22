@@ -1,0 +1,149 @@
+name: flowcollector-default
+description: Default FlowCollector with Direct deployment model, Loki enabled, sampling 1
+template: templates/netobserv/flowcollector_v1beta2_template.yaml
+parameters:
+  Namespace: netobserv
+  DeploymentModel: Direct
+  LokiEnable: "true"
+  LokiMode: LokiStack
+  LokistackName: lokistack
+  LokiNamespace: netobserv-loki
+  PluginEnable: "true"
+  Sampling: "1"
+  EBPFMetrics: "true"
+  NetworkPolicyEnable: "true"
+  EBPFFilterEnable: "true"
+  EBPFFilterRules: '[{"action": "Accept","cidr": "0.0.0.0/0"}]'
+lifecycle:
+  create: >
+    Use process_template to render templates/netobserv/flowcollector_v1beta2_template.yaml
+    with all listed parameters. Write the rendered output to a temp file, then use oc_apply
+    to apply it to create the cluster-scoped FlowCollector CR.
+  ready: >
+    Wait for FlowCollector status condition Ready=True on flowcollector/cluster.
+    Wait for all flowlogs-pipeline pods running in netobserv.
+    Wait for all netobserv-ebpf-agent daemonset pods running in netobserv-privileged.
+  cleanup: >
+    Delete FlowCollector CR named "cluster" (oc_delete flowcollector cluster) and wait
+    for all related pods to terminate in netobserv and netobserv-privileged namespaces.
+---
+name: flowcollector-kafka
+description: FlowCollector with Kafka deployment model for Kafka-backed tests
+template: templates/netobserv/flowcollector_v1beta2_template.yaml
+parameters:
+  Namespace: netobserv
+  DeploymentModel: Kafka
+  KafkaAddress: kafka-cluster-kafka-bootstrap.kafka:9093
+  KafkaTLSEnable: "true"
+  KafkaClusterName: kafka-cluster
+  KafkaTopic: network-flows
+  KafkaUser: flp-kafka
+  KafkaNamespace: kafka
+  LokiEnable: "true"
+  LokiMode: LokiStack
+  LokistackName: lokistack
+  LokiNamespace: netobserv-loki
+  PluginEnable: "true"
+  Sampling: "1"
+lifecycle:
+  create: >
+    Use process_template to render templates/netobserv/flowcollector_v1beta2_template.yaml
+    with all listed parameters. Write the rendered output to a temp file, then use oc_apply
+    to apply it to create the cluster-scoped FlowCollector CR.
+  ready: >
+    Wait for FlowCollector status condition Ready=True on flowcollector/cluster.
+    Wait for flowlogs-pipeline-transformer pods running in netobserv.
+    Wait for ebpf-agent daemonset pods running in netobserv-privileged.
+  cleanup: >
+    Delete FlowCollector CR named "cluster" and wait for all related pods to terminate.
+---
+name: flowcollector-no-loki
+description: FlowCollector with Kafka but without Loki backend
+template: templates/netobserv/flowcollector_v1beta2_template.yaml
+parameters:
+  Namespace: netobserv
+  DeploymentModel: Kafka
+  KafkaAddress: kafka-cluster-kafka-bootstrap.kafka:9093
+  KafkaTLSEnable: "true"
+  KafkaClusterName: kafka-cluster
+  KafkaTopic: network-flows
+  KafkaUser: flp-kafka
+  KafkaNamespace: kafka
+  LokiEnable: "false"
+  PluginEnable: "true"
+  Sampling: "1"
+lifecycle:
+  create: >
+    Use process_template to render templates/netobserv/flowcollector_v1beta2_template.yaml
+    with all listed parameters. Write the rendered output to a temp file, then use oc_apply
+    to apply it to create the cluster-scoped FlowCollector CR.
+  ready: >
+    Wait for FlowCollector status condition Ready=True on flowcollector/cluster.
+  cleanup: >
+    Delete FlowCollector CR named "cluster" and wait for all related pods to terminate.
+---
+name: flowcollector-sampling-50
+description: FlowCollector with sampling rate of 50
+template: templates/netobserv/flowcollector_v1beta2_template.yaml
+parameters:
+  Namespace: netobserv
+  DeploymentModel: Direct
+  LokiEnable: "true"
+  LokiMode: LokiStack
+  LokistackName: lokistack
+  LokiNamespace: netobserv-loki
+  PluginEnable: "true"
+  Sampling: "50"
+lifecycle:
+  create: >
+    Use process_template to render templates/netobserv/flowcollector_v1beta2_template.yaml
+    with all listed parameters. Write the rendered output to a temp file, then use oc_apply
+    to apply it to create the cluster-scoped FlowCollector CR.
+  ready: >
+    Wait for FlowCollector status condition Ready=True on flowcollector/cluster.
+  cleanup: >
+    Delete FlowCollector CR named "cluster" and wait for termination.
+---
+name: flowcollector-multicluster
+description: FlowCollector with MultiClusterDeployment and zone tracking enabled
+template: templates/netobserv/flowcollector_v1beta2_template.yaml
+parameters:
+  Namespace: netobserv
+  DeploymentModel: Direct
+  LokiEnable: "true"
+  LokiMode: LokiStack
+  LokistackName: lokistack
+  LokiNamespace: netobserv-loki
+  PluginEnable: "true"
+  Sampling: "1"
+  MultiClusterDeployment: "true"
+  AddZone: "true"
+lifecycle:
+  create: >
+    Use process_template to render templates/netobserv/flowcollector_v1beta2_template.yaml with all listed parameters. Write the rendered output to a temp file, then use oc_apply to apply it to create the cluster-scoped FlowCollector CR.
+  ready: >
+    Wait for FlowCollector status condition Ready=True on flowcollector/cluster.
+  cleanup: >
+    Delete FlowCollector CR named "cluster" and wait for termination.
+---
+name: flowcollector-service-model
+description: FlowCollector with Service deployment model
+template: templates/netobserv/flowcollector_v1beta2_template.yaml
+parameters:
+  Namespace: netobserv
+  DeploymentModel: Service
+  LokiEnable: "true"
+  LokiMode: LokiStack
+  LokistackName: lokistack
+  LokiNamespace: netobserv-loki
+  PluginEnable: "true"
+  Sampling: "1"
+lifecycle:
+  create: >
+    Use process_template to render templates/netobserv/flowcollector_v1beta2_template.yaml with all listed parameters. Write the rendered output to a temp file, then use oc_apply to apply it to create the cluster-scoped FlowCollector CR.
+  ready: >
+    Wait for FlowCollector status condition Ready=True on flowcollector/cluster. 
+    Verify FLP is running as a Kubernetes Service.
+
+  cleanup: >
+    Delete FlowCollector CR named "cluster" and wait for termination.

@@ -1,0 +1,15 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: namespace
+parameters:
+  - name: Name
+    description: Namespace name
+    required: true
+objects:
+  - apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: ${Name}
+      labels:
+        openshift.io/cluster-monitoring: "true"

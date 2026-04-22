@@ -1,0 +1,33 @@
+services:
+  db:
+    image: mariadb:11
+    container_name: sdt-kiwi-db
+    environment:
+      MYSQL_ROOT_PASSWORD: kiwi
+      MYSQL_DATABASE: kiwi
+      MYSQL_USER: kiwi
+      MYSQL_PASSWORD: kiwi
+    volumes:
+      - kiwi_db:/var/lib/mysql
+
+  kiwi:
+    image: kiwitcms/kiwi:latest
+    container_name: sdt-kiwi-tcms
+    depends_on:
+      - db
+    ports:
+      - "8443:8443"
+      - "8080:8080"
+    volumes:
+      - kiwi_uploads:/Kiwi/uploads
+    environment:
+      KIWI_DB_ENGINE: django.db.backends.mysql
+      KIWI_DB_HOST: db
+      KIWI_DB_PORT: "3306"
+      KIWI_DB_NAME: kiwi
+      KIWI_DB_USER: kiwi
+      KIWI_DB_PASSWORD: kiwi
+
+volumes:
+  kiwi_uploads:
+  kiwi_db:

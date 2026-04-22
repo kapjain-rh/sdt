@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/openshift/sdt/pkg/log"
+	"github.com/sdt-project/sdt/pkg/log"
 )
 
 // RegisterShellTools registers local shell and file reading tools.
@@ -144,12 +144,3 @@ func RegisterShellTools(registry *Registry, constraints *ToolConstraints) {
 	})
 }
 
-// RegisterAllTools registers all built-in MCP tools into the registry.
-func RegisterAllTools(registry *Registry, oc *OCClient) {
-	constraints := DefaultConstraints()
-	RegisterOCTools(registry, oc, constraints)
-	RegisterResourceTools(registry, oc)
-	RegisterMetricsTools(registry, oc)
-	RegisterOperatorTools(registry, oc)
-	RegisterShellTools(registry, constraints)
-}

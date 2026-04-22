@@ -6,17 +6,18 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/openshift/sdt/pkg/cache"
-	"github.com/openshift/sdt/pkg/fixture"
-	"github.com/openshift/sdt/pkg/llm"
-	"github.com/openshift/sdt/pkg/log"
-	"github.com/openshift/sdt/pkg/spec"
+	"github.com/sdt-project/sdt/pkg/cache"
+	"github.com/sdt-project/sdt/pkg/fixture"
+	"github.com/sdt-project/sdt/pkg/llm"
+	"github.com/sdt-project/sdt/pkg/log"
+	"github.com/sdt-project/sdt/pkg/spec"
 )
 
 // PlannerAgent creates execution plans from test specifications.
 type PlannerAgent struct {
-	llmClient *llm.Client
-	store     *cache.Store
+	llmClient    *llm.Client
+	store        *cache.Store
+	promptContext *PromptContext
 }
 
 // ExecutionPlan is the output of the planner: a detailed execution plan for a test.
@@ -116,6 +117,17 @@ func NewPlannerAgent(llmClient *llm.Client, store *cache.Store) *PlannerAgent {
 	}
 }
 
+// WithPromptContext sets dynamic prompt context for the planner.
+func (p *PlannerAgent) WithPromptContext(pctx *PromptContext) *PlannerAgent {
+	p.promptContext = pctx
+	return p
+}
+
+// systemPrompt returns the planner system prompt with dynamic tool info.
+func (p *PlannerAgent) systemPrompt() string {
+	return BuildSystemPrompt(PlannerSystemPrompt, p.promptContext)
+}
+
 // Plan generates an execution plan for a test spec, using cache when available.
 // It checks the cache first by computing a spec hash. If a plan exists, it returns it.
 // Otherwise, it generates a new plan via LLM and saves it to cache.
@@ -179,7 +191,7 @@ func (p *PlannerAgent) PlanHooks(ctx context.Context, phaseName string, steps []
 
 	log.Infof("PLAN", "Requesting hook plan from LLM for %q (%d steps)", phaseName, len(steps))
 
-	resp, err := p.llmClient.Chat(ctx, PlannerSystemPrompt, prompt, nil)
+	resp, err := p.llmClient.Chat(ctx, p.systemPrompt(), prompt, nil)
 	if err != nil {
 		return nil, fmt.Errorf("llm call for hook plan failed: %w", err)
 	}
@@ -250,7 +262,7 @@ func (p *PlannerAgent) generatePlan(ctx context.Context, testSpec *spec.TestSpec
 		testSpec.Name, len(testSpec.Setup), len(testSpec.Steps), len(testSpec.Verify), len(testSpec.Cleanup))
 
 	// Call the LLM
-	resp, err := p.llmClient.Chat(ctx, PlannerSystemPrompt, prompt, nil)
+	resp, err := p.llmClient.Chat(ctx, p.systemPrompt(), prompt, nil)
 	if err != nil {
 		log.Errorf("PLAN", "LLM call failed for %q: %v", testSpec.Name, err)
 		return nil, fmt.Errorf("llm call failed: %w", err)

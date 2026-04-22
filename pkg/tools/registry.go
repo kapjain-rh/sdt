@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openshift/sdt/pkg/log"
+	"github.com/sdt-project/sdt/pkg/log"
 )
 
 // Tool represents a single MCP tool that can be called by the LLM agent.
@@ -16,6 +16,8 @@ type Tool struct {
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
 	Handler     ToolHandler     `json:"-"`
+	PromptHint  string          `json:"-"` // guidance for the LLM about when to use this tool
+	Category    string          `json:"-"` // "core", "runtime", or project-specific category
 }
 
 // ToolHandler is the function that executes a tool call.

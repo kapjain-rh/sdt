@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/openshift/sdt/pkg/cache"
-	"github.com/openshift/sdt/pkg/spec"
+	"github.com/sdt-project/sdt/pkg/cache"
+	"github.com/sdt-project/sdt/pkg/spec"
 )
 
 // MemoryAgent manages caching of plans and results for test specs.

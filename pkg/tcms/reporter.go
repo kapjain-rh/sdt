@@ -3,8 +3,8 @@ package tcms
 import (
 	"strconv"
 
-	"github.com/openshift/sdt/pkg/log"
-	"github.com/openshift/sdt/pkg/reporter"
+	"github.com/sdt-project/sdt/pkg/log"
+	"github.com/sdt-project/sdt/pkg/reporter"
 )
 
 // TCMSReporter implements the reporter.Reporter interface and reports

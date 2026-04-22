@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/openshift/sdt/pkg/llm"
-	"github.com/openshift/sdt/pkg/log"
-	"github.com/openshift/sdt/pkg/tools"
+	"github.com/sdt-project/sdt/pkg/llm"
+	"github.com/sdt-project/sdt/pkg/log"
+	"github.com/sdt-project/sdt/pkg/tools"
 )
 
 // ExecutorAgent executes an execution plan using the LLM as an autonomous agent.
 type ExecutorAgent struct {
-	llmClient *llm.Client
-	registry  *tools.Registry
+	llmClient    *llm.Client
+	registry     *tools.Registry
+	promptContext *PromptContext
 }
 
 // ExecutionResult captures the outcome of executing a plan.
@@ -64,6 +65,17 @@ func NewExecutorAgent(llmClient *llm.Client, registry *tools.Registry) *Executor
 		llmClient: llmClient,
 		registry:  registry,
 	}
+}
+
+// WithPromptContext sets dynamic prompt context for the executor.
+func (e *ExecutorAgent) WithPromptContext(pctx *PromptContext) *ExecutorAgent {
+	e.promptContext = pctx
+	return e
+}
+
+// systemPrompt returns the executor system prompt with dynamic tool info.
+func (e *ExecutorAgent) systemPrompt() string {
+	return BuildSystemPrompt(ExecutorSystemPrompt, e.promptContext)
 }
 
 // Execute runs the execution plan using the LLM as an autonomous agent.
@@ -120,7 +132,7 @@ func (e *ExecutorAgent) Execute(ctx context.Context, plan *ExecutionPlan, extraC
 	req := &llm.Request{
 		Model:     "",
 		MaxTokens: 0,
-		System:    ExecutorSystemPrompt,
+		System:    e.systemPrompt(),
 		Messages: []llm.Message{
 			{
 				Role: llm.RoleUser,

@@ -5,10 +5,24 @@ package fixture
 type Definition struct {
 	Name        string            `yaml:"name"`
 	Description string            `yaml:"description"`
+	Status      string            `yaml:"status,omitempty"` // "draft" or "approved" (empty = approved)
 	Template    string            `yaml:"template,omitempty"`    // Single template path
 	Templates   []string          `yaml:"templates,omitempty"`  // Multiple template paths
 	Parameters  map[string]string `yaml:"parameters,omitempty"` // Template parameters
 	Lifecycle   Lifecycle         `yaml:"lifecycle"`
+}
+
+// EffectiveStatus returns the fixture status, defaulting to "approved" if empty.
+func (d *Definition) EffectiveStatus() string {
+	if d.Status == "" {
+		return "approved"
+	}
+	return d.Status
+}
+
+// IsDraft returns true if the fixture is in draft status.
+func (d *Definition) IsDraft() bool {
+	return d.EffectiveStatus() == "draft"
 }
 
 // Lifecycle defines natural language descriptions of fixture lifecycle operations.

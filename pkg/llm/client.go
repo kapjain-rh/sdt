@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/openshift/sdt/pkg/log"
+	"github.com/sdt-project/sdt/pkg/log"
 )
 
 const (
@@ -29,11 +29,17 @@ func WithMaxTokens(tokens int) ClientOption {
 	return func(c *Client) { c.maxTokens = tokens }
 }
 
+// WithProvider sets a custom LLM provider (bypasses env-var auto-detection).
+func WithProvider(p Provider) ClientOption {
+	return func(c *Client) { c.provider = p }
+}
+
 // NewClient creates a new LLM client, selecting the provider based on environment:
 //   - SDT_PROVIDER=gemini → Gemini via Vertex AI
 //   - Otherwise → Claude (direct Anthropic API or Vertex AI)
 //
 // Model can be overridden via SDT_MODEL.
+// Use WithProvider() to inject a custom provider instead of auto-detecting.
 func NewClient(opts ...ClientOption) (*Client, error) {
 	c := &Client{
 		maxTokens: defaultMaxTokens,
@@ -41,6 +47,11 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 
 	for _, opt := range opts {
 		opt(c)
+	}
+
+	// If a provider was injected via WithProvider, skip auto-detection
+	if c.provider != nil {
+		return c, nil
 	}
 
 	model := os.Getenv("SDT_MODEL")
@@ -62,6 +73,18 @@ func NewClient(opts ...ClientOption) (*Client, error) {
 
 	c.provider = provider
 	return c, nil
+}
+
+// NewClientWithProvider creates a client with an explicit provider.
+func NewClientWithProvider(provider Provider, opts ...ClientOption) *Client {
+	c := &Client{
+		provider:  provider,
+		maxTokens: defaultMaxTokens,
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // SendMessage sends a message to the LLM and returns the response.

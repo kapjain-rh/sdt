@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/openshift/sdt/pkg/log"
+	"github.com/sdt-project/sdt/pkg/log"
 	"golang.org/x/oauth2/google"
 )
 

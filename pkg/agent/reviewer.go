@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/openshift/sdt/pkg/llm"
-	"github.com/openshift/sdt/pkg/spec"
+	"github.com/sdt-project/sdt/pkg/llm"
+	"github.com/sdt-project/sdt/pkg/spec"
 )
 
 // ReviewerAgent reviews test specifications and analyzes execution failures.

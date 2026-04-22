@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/openshift/sdt/pkg/log"
-	"github.com/openshift/sdt/pkg/reporter"
-	"github.com/openshift/sdt/pkg/spec"
+	"github.com/sdt-project/sdt/pkg/log"
+	"github.com/sdt-project/sdt/pkg/reporter"
+	"github.com/sdt-project/sdt/pkg/spec"
 )
 
 // KiwiClient communicates with Kiwi TCMS via its JSON-RPC API.

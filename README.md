@@ -1,23 +1,21 @@
-# SDT - Spec-Driven Testing for OpenShift
+# SDT — Spec-Driven Testing
 
-SDT is an AI-powered test framework for OpenShift. Tests are written as Markdown specs in natural language. An LLM agent reads each spec, plans execution steps, and runs them autonomously against a live OpenShift cluster via MCP tools.
+SDT is a product-agnostic, AI-powered test framework. Tests are written as Markdown specs in natural language. An LLM agent reads each spec, plans execution steps, and runs them autonomously against any target system via MCP tools.
 
 Instead of writing fragile imperative test scripts, you describe **what** to test in plain English. The AI agent figures out **how** to execute it.
 
 ## Why SDT?
 
-- **Natural language test specs** -- Tests are readable Markdown files, not code. Anyone who understands the product can write, review, and maintain them.
-- **Zero test code maintenance** -- No test framework bindings, no selector breakage, no API version chasing. The agent adapts to cluster state dynamically.
-- **Autonomous execution** -- The LLM agent plans steps, calls OpenShift tools, interprets results, retries on transient failures, and validates outcomes -- all without human intervention.
-- **Plan caching** -- Execution plans are cached by spec content hash. Re-runs skip planning and go straight to execution, saving time and tokens.
-- **Multi-provider LLM support** -- Works with Claude (Anthropic API or Vertex AI) and Google Gemini out of the box.
-- **Suite orchestration** -- Suite-level and group-level hooks let you share setup/teardown logic across tests without duplication.
-- **CI-ready reporting** -- JUnit XML output, console reporting, and Kiwi TCMS integration for test case management and result tracking.
-- **Fixture system** -- Parameterized YAML resource definitions with lifecycle instructions the agent interprets at runtime.
+- **Natural language test specs** — Tests are readable Markdown files, not code. Anyone who understands the product can write, review, and maintain them.
+- **Product-agnostic** — Works with any system: web apps, Kubernetes clusters, APIs, databases, CLI tools. Bring your own tools via MCP servers or YAML definitions.
+- **Zero test code maintenance** — No test framework bindings, no selector breakage, no API version chasing. The agent adapts dynamically.
+- **Autonomous execution** — The LLM agent plans steps, calls tools, interprets results, retries on transient failures, and validates outcomes — all without human intervention.
+- **Plan caching** — Execution plans are cached by spec content hash. Re-runs skip planning and go straight to execution, saving time and tokens.
+- **Multi-provider LLM support** — Works with Claude (Anthropic API or Vertex AI) and Google Gemini out of the box.
+- **Tool lifecycle** — Create, test, and approve tools interactively before using them in test runs.
+- **CI-ready reporting** — JUnit XML output, console reporting, and Kiwi TCMS integration for test case management.
 
 ## How It Works
-
-When you run `sdt run`, a multi-agent pipeline executes for each spec:
 
 ```
 Spec (Markdown) --> Memory Agent --> Planner Agent --> Executor Agent --> Results
@@ -26,7 +24,7 @@ Spec (Markdown) --> Memory Agent --> Planner Agent --> Executor Agent --> Result
 
 1. **Memory Agent** checks the plan cache for a previously generated plan.
 2. **Planner Agent** reads the spec and produces a structured execution plan with phases, steps, and tool mappings.
-3. **Executor Agent** runs the plan in auto-pilot mode, calling MCP tools (`oc_get`, `oc_apply`, `wait_for_pods_ready`, `shell`, etc.) in a multi-turn loop until completion.
+3. **Executor Agent** runs the plan in auto-pilot mode, calling tools in a multi-turn loop until completion.
 4. **Reviewer Agent** (optional) reviews spec quality or analyzes execution failures.
 5. Results are reported to the console, JUnit XML, and/or Kiwi TCMS.
 
@@ -35,33 +33,23 @@ Spec (Markdown) --> Memory Agent --> Planner Agent --> Executor Agent --> Result
 ### Prerequisites
 
 - Go 1.21+
-- `oc` CLI logged into an OpenShift cluster (`oc whoami` should succeed)
 - An Anthropic API key **or** Google Cloud credentials for Vertex AI
-- Docker (optional, for Kiwi TCMS)
 
 ### Build from source
 
 ```bash
-git clone https://github.com/openshift/sdt.git
+git clone https://github.com/sdt-project/sdt.git
 cd sdt
 make build        # builds binary to bin/sdt
 ```
 
-Or install directly to your `$GOPATH/bin`:
+Or install directly:
 
 ```bash
-make install
-```
-
-### Verify installation
-
-```bash
-sdt --version
+make install      # installs to $GOPATH/bin
 ```
 
 ### Environment setup
-
-Set one of the following credential pairs:
 
 ```bash
 # Option A: Anthropic API key (direct)
@@ -77,353 +65,584 @@ export GOOGLE_CLOUD_PROJECT=my-project
 export GOOGLE_CLOUD_REGION=us-central1
 ```
 
-Optional settings:
-
 | Variable | Default | Description |
 |---|---|---|
 | `SDT_PROVIDER` | `claude` | LLM provider: `claude` or `gemini` |
 | `SDT_MODEL` | `claude-opus-4-6` / `gemini-2.5-pro` | Override model name |
 | `SDT_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
-| `KUBECONFIG` | `~/.kube/config` | Path to kubeconfig |
 
 ## Quick Start
 
-### 1. Write a test spec
+### 1. Set up SDT in your project
 
-Create a Markdown file describing your test in natural language:
+```bash
+cd my-project
+sdt setup myapp
+```
+
+This creates:
+
+```
+my-project/
+  .sdt.yaml                    # SDT configuration
+  sdt/
+    specs/
+      _suite.md                # Suite-level hooks
+      smoke-test.md            # Sample test spec
+    fixtures/
+      sample.yaml              # Sample fixture
+    tools/                     # Custom tool definitions (YAML)
+    mcp/
+      README.md                # Guide for adding MCP servers
+```
+
+### 2. Add project-specific tools
+
+```bash
+# Create a tool via the default MCP server (YAML definition)
+sdt tools add check_health \
+  --description "Check application health" \
+  --command "curl -sf {{.endpoint}}/health"
+
+# Edit the generated YAML to refine parameters
+vi sdt/tools/check_health.yaml
+
+# Test the tool
+sdt tools test check_health --input '{"endpoint": "http://localhost:8080"}'
+
+# Approve it for use in test runs
+sdt tools approve check_health
+
+# List all available tools
+sdt tools list
+```
+
+```
+NAME            SOURCE          STATUS    DESCRIPTION
+----            ------          ------    -----------
+shell           core            -         Execute a local shell command
+read_file       core            -         Read the contents of a local file
+check_health    default         approved  Check application health
+oc_get          mcp:openshift   -         Get OpenShift resources
+```
+
+### 3. Create and manage test specs
+
+```bash
+# Scaffold a draft spec
+sdt specs add login-flow --author john --priority High --timeout 15m
+
+# Edit the spec — add your test steps
+vi sdt/specs/login-flow.md
+
+# Validate structure (no LLM needed)
+sdt validate sdt/specs/login-flow.md
+
+# AI quality review
+sdt review sdt/specs/login-flow.md
+
+# Dry run — plan only, verify it works
+sdt run --dry-run sdt/specs/login-flow.md
+
+# Approve for production runs and TCMS sync
+sdt specs approve sdt/specs/login-flow.md
+
+# List all specs with status
+sdt specs list
+```
+
+```
+NAME                STATUS    PRIORITY  GROUP  CASEID  FILE
+----                ------    --------  -----  ------  ----
+Api Crud            draft     Critical  api    -       sdt/specs/api-crud.md
+Login Flow          approved  High      -      -       sdt/specs/login-flow.md
+Smoke Test          approved  high      smoke  -       sdt/specs/smoke-test.md
+
+Total: 3 specs (2 approved, 1 draft)
+```
+
+A scaffolded spec looks like:
 
 ```markdown
-# Test: Verify Pod Runs Successfully
+# Test: Login Flow
 
 ## Metadata
-- Author: yourname
-- Priority: Critical
-- Labels: [Smoke]
-- Timeout: 10m
+- Author: john
+- Priority: High
+- Status: draft
+- Timeout: 15m
+- Labels: []
 
 ## Setup
-Create namespace `my-test-ns` and deploy an nginx pod.
+1. TODO: Describe pre-test setup
 
 ## Steps
-1. Get the nginx pod in namespace `my-test-ns` and verify its status is Running.
-2. Execute `curl -s localhost` inside the nginx pod and verify it returns the default welcome page.
-3. Check that the pod has no restarts.
+1. TODO: Describe the first test action
+2. TODO: Describe the second test action
 
 ## Verify
-- The nginx pod is in Running phase with all containers ready.
-- The curl output contains "Welcome to nginx".
-- Pod restart count is 0.
+1. TODO: Describe what to verify after steps complete
 
 ## Cleanup
-Delete namespace `my-test-ns`.
+1. TODO: Describe cleanup actions
 ```
 
-### 2. Validate the spec (no cluster or LLM needed)
+**Spec lifecycle:**
 
-```bash
-sdt validate specs/myproduct/
+```
+sdt specs add        → creates spec (status: draft)
+sdt validate         → check structure (no LLM)
+sdt review           → AI quality review
+sdt specs run        → run with section control (drafts included)
+sdt specs approve    → status → approved
+                        ↓
+sdt run              → only approved specs run (--include-drafts to override)
+sdt tcms sync        → only approved specs sync to TCMS
 ```
 
-### 3. Run the test
+### 4. Run tests
+
+**During development** — use `sdt specs run` with section control:
 
 ```bash
+# Run only setup (verify your setup works)
+sdt specs run sdt/specs/login-flow.md --only setup
+
+# Run steps and verify, skip cleanup
+sdt specs run sdt/specs/login-flow.md --only steps,verify
+
+# Skip cleanup during debugging
+sdt specs run sdt/specs/login-flow.md --skip cleanup
+
+# Dry run — plan only
+sdt specs run sdt/specs/login-flow.md --dry-run
+
+# Run just cleanup (teardown from a previous run)
+sdt specs run sdt/specs/login-flow.md --only cleanup
+```
+
+**In CI/production** — use `sdt run` (only approved specs):
+
+```bash
+# Run all approved specs
+sdt run sdt/specs/
+
+# Include draft specs
+sdt run --include-drafts sdt/specs/
+
 # Run a single spec
-sdt run specs/myproduct/my-test.md
-
-# Run all specs in a directory
-sdt run specs/myproduct/
+sdt run sdt/specs/login-flow.md
 
 # Dry run (plan only, no execution)
-sdt run --dry-run specs/myproduct/my-test.md
+sdt run --dry-run sdt/specs/login-flow.md
 
 # With JUnit output for CI
-sdt run --junit-dir results/ specs/myproduct/
+sdt run --junit-dir results/ sdt/specs/
 ```
 
-### 4. Other commands
+### 5. Organize into suites
 
 ```bash
-sdt list specs/myproduct/                # List all specs
-sdt list --format json specs/myproduct/  # List as JSON
-sdt review specs/myproduct/my-test.md    # AI review of spec quality
-sdt cache status specs/myproduct/        # Check plan cache
-sdt cache clear                          # Clear all cached plans
+# Create a test suite
+sdt suite add regression --description "Full regression tests"
+sdt suite add api-tests
+
+# List all suites
+sdt suite list
 ```
 
-## Project Structure
-
 ```
-sdt/
-├── cmd/sdt/                  # CLI entry point and subcommands
-│   ├── main.go               #   root command (cobra)
-│   ├── run.go                #   `sdt run` -- execute specs
-│   ├── list.go               #   `sdt list` -- list specs
-│   ├── validate.go           #   `sdt validate` -- check spec structure
-│   ├── review.go             #   `sdt review` -- AI spec review
-│   ├── cache.go              #   `sdt cache` -- plan cache management
-│   └── tcms.go               #   `sdt tcms` -- Kiwi TCMS integration
-│
-├── pkg/
-│   ├── agent/                # LLM agent implementations
-│   │   ├── planner.go        #   creates execution plans from specs
-│   │   ├── executor.go       #   runs plans via agentic tool-use loop
-│   │   ├── memory.go         #   plan cache lookup
-│   │   ├── reviewer.go       #   spec quality review / failure analysis
-│   │   ├── coding.go         #   YAML template generation
-│   │   └── prompts.go        #   system prompts for all agents
-│   │
-│   ├── llm/                  # LLM client abstraction
-│   │   ├── provider.go       #   Provider interface
-│   │   ├── client.go         #   shared client logic (Chat, RunAgentLoop)
-│   │   ├── claude.go         #   Anthropic Messages API provider
-│   │   ├── gemini.go         #   Google Gemini provider
-│   │   └── types.go          #   message/tool types
-│   │
-│   ├── tools/                # MCP tool registry
-│   │   ├── registry.go       #   tool registration and dispatch
-│   │   ├── oc.go             #   oc_run, oc_apply, oc_delete, oc_get, oc_patch, oc_exec, oc_logs
-│   │   ├── resource.go       #   create_namespace, delete_namespace, wait_for_*
-│   │   ├── operator.go       #   deploy_operator, process_template
-│   │   ├── metrics.go        #   query_metric (PromQL via thanos-querier)
-│   │   ├── shell.go          #   shell, read_file, write_file
-│   │   └── constraints.go    #   tool input validation
-│   │
-│   ├── spec/                 # Spec parsing and loading
-│   │   ├── parser.go         #   Markdown-to-TestSpec parser
-│   │   ├── loader.go         #   directory/file loader with suite/group resolution
-│   │   └── types.go          #   TestSpec, SuiteConfig types
-│   │
-│   ├── runner/               # Test orchestration
-│   │   └── runner.go         #   RunSuite/RunSpec lifecycle
-│   │
-│   ├── cache/                # Plan and result caching
-│   │   ├── store.go          #   content-hash-based plan cache
-│   │   └── history.go        #   execution result history
-│   │
-│   ├── fixture/              # Fixture system
-│   │   ├── types.go          #   Fixture type definitions
-│   │   ├── loader.go         #   YAML fixture loader
-│   │   └── manager.go        #   fixture lifecycle management
-│   │
-│   ├── template/             # Template processing
-│   │   ├── processor.go      #   Go text/template and oc process
-│   │   ├── registry.go       #   template discovery
-│   │   └── types.go          #   template type definitions
-│   │
-│   ├── reporter/             # Result reporting
-│   │   ├── types.go          #   Reporter interface, MultiReporter
-│   │   ├── console.go        #   terminal output
-│   │   └── junit.go          #   JUnit XML output
-│   │
-│   ├── tcms/                 # Kiwi TCMS integration
-│   │   ├── client.go         #   JSON-RPC client
-│   │   ├── sync.go           #   spec-to-TCMS sync
-│   │   └── reporter.go       #   TCMS result reporter
-│   │
-│   ├── mcp/                  # MCP server
-│   │   ├── server.go         #   MCP protocol server
-│   │   └── tools.go          #   tool schema exposure
-│   │
-│   └── log/                  # Structured logging
-│       └── log.go
-│
-├── specs/                    # Test spec suites
-│   ├── examples/             #   example suite with sample specs
-│   └── netobserv/            #   Network Observability test suite
-│
-├── fixtures/                 # Fixture definitions (YAML)
-│   ├── examples/
-│   └── netobserv/
-│
-├── templates/                # Kubernetes/OpenShift YAML templates
-│   ├── common/               #   generic pod, deployment, service, configmap
-│   ├── operators/            #   subscription, operatorgroup, namespace
-│   ├── networking/           #   nginx client/server
-│   └── netobserv/            #   FlowCollector, Kafka, Loki, etc.
-│
-├── docs/                     # Documentation
-├── Makefile                  # Build, test, lint, format targets
-└── .sdt/cache/               # Local plan/result cache (gitignored)
+SUITE                  SPECS  APPROVED  DRAFT  GROUPS  PATH
+-----                  -----  --------  -----  ------  ----
+myapp Test Suite       3      2         1      0       sdt/specs
+Api Tests Test Suite   2      2         0      0       sdt/specs/api-tests
+Regression Test Suite  5      4         1      0       sdt/specs/regression
+```
+
+```bash
+# Run a full suite
+sdt suite run sdt/specs/regression
+
+# Run suite with section control
+sdt suite run sdt/specs/regression --only pre-suite,setup,steps,verify
+
+# Skip cleanup and post-suite
+sdt suite run sdt/specs/regression --skip cleanup,post-suite
+
+# Run suite with JUnit and TCMS
+sdt suite run sdt/specs/regression --junit-dir results/ --tcms --tcms-product MyApp
+```
+
+## Tools
+
+SDT tools come from three sources:
+
+### Core tools (built-in)
+
+Always available, no configuration needed:
+
+| Tool | Description |
+|---|---|
+| `shell` | Execute shell commands |
+| `read_file` / `write_file` | File I/O |
+| `python` / `node` / `go_run` | Language runtime execution |
+| `npm` / `npx` / `cypress` | Node.js ecosystem tools |
+| `check_runtimes` | Check available runtimes |
+
+### Default MCP server (YAML tool definitions)
+
+Simple command-based tools defined as YAML files in `sdt/tools/`. Managed via `sdt tools add/test/approve`.
+
+```yaml
+# sdt/tools/oc_get.yaml
+name: oc_get
+description: Get OpenShift resources in JSON format
+category: openshift
+status: approved
+input:
+  resource:
+    type: string
+    description: "Resource type (e.g., pods, deployments)"
+    required: true
+  namespace:
+    type: string
+    description: Target namespace
+command: "oc get {{.resource}} {{if .namespace}}-n {{.namespace}}{{end}} -o json"
+```
+
+**Tool lifecycle:**
+
+```bash
+sdt tools add <name>           # Create draft tool
+sdt tools test <name> --input  # Test with sample input
+sdt tools approve <name>       # Promote to approved
+sdt tools list                 # List all tools with status
+```
+
+Only approved tools are loaded during `sdt run`. Draft tools are skipped.
+
+### Third-party MCP servers
+
+External MCP servers for complex tools that need full code logic. Written in any language (Go, Python, TypeScript, bash) and configured in `.sdt.yaml`:
+
+```yaml
+mcpServers:
+  openshift:
+    command: ./sdt/mcp/openshift-server
+  database:
+    command: python
+    args: [-m, db_mcp_server]
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+```
+
+SDT connects to each server at startup via JSON-RPC 2.0 over stdio, discovers tools via `tools/list`, and registers them in the tool registry.
+
+Example Python MCP server:
+
+```python
+from mcp.server.stdio import stdio_server
+from mcp.server import Server
+from mcp import types
+import subprocess
+
+server = Server("openshift-tools")
+
+@server.list_tools()
+async def list_tools():
+    return [
+        types.Tool(
+            name="oc_get",
+            description="Get OpenShift resources",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "resource": {"type": "string", "description": "Resource type"},
+                    "namespace": {"type": "string", "description": "Namespace"}
+                },
+                "required": ["resource"]
+            }
+        )
+    ]
+
+@server.call_tool()
+async def call_tool(name, arguments):
+    if name == "oc_get":
+        cmd = ["oc", "get", arguments["resource"], "-o", "json"]
+        if arguments.get("namespace"):
+            cmd += ["-n", arguments["namespace"]]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return [types.TextContent(type="text", text=result.stdout or result.stderr)]
+
+async def main():
+    async with stdio_server() as (read, write):
+        await server.run(read, write)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
 ```
 
 ## Use Cases
 
-### Regression testing for OpenShift operators
+### Web application E2E testing
 
-Write specs that deploy an operator, configure its CR, verify expected pods and resources come up, and clean up. Run them nightly against development clusters with JUnit reporting for CI dashboards.
+```bash
+sdt setup webapp
+sdt tools add check_health --command "curl -sf {{.url}}/health"
+sdt tools add check_login --command "curl -sf -X POST -d '{\"user\":\"{{.user}}\",\"pass\":\"{{.pass}}\"}' {{.url}}/login"
+sdt tools approve check_health
+sdt tools approve check_login
+```
 
-### Network observability end-to-end testing
+Write specs that verify login flows, API endpoints, page loads, and error handling. The LLM agent orchestrates curl, health checks, and assertions autonomously.
 
-The included `specs/netobserv/` suite covers 30+ test scenarios: flow correctness, Kafka with TLS, eBPF filtering, metrics, alerts, connection tracking, multi-tenancy, SCTP/ICMP, UDN, virtual machines, and more.
+### Kubernetes / OpenShift cluster testing
 
-### Exploratory validation during development
+Configure an MCP server exposing `oc` / `kubectl` tools, then write specs that deploy operators, verify pod health, check metrics, and clean up resources. Run nightly with JUnit reporting for CI dashboards. See `examples/openshift-mcp-server/` for a complete Go-based MCP server with 14 tools.
 
-Run a single spec against a dev cluster to quickly validate that a feature works as expected. The dry-run mode (`--dry-run`) lets you review the execution plan before committing to a real run.
+```yaml
+# .sdt.yaml
+mcpServers:
+  openshift:
+    command: ./openshift-mcp-server
+    env:
+      KUBECONFIG: /path/to/kubeconfig
+```
 
-### Test case management
+### Database validation
 
-Sync specs to Kiwi TCMS so QE teams can track test coverage, link specs to test plans, and view execution results alongside manual test efforts.
+```bash
+sdt tools add db_query --command "psql -h {{.host}} -U {{.user}} -d {{.database}} -c '{{.query}}'"
+sdt tools approve db_query
+```
 
-### Cross-team test authoring
+Write specs that verify schema migrations, data integrity, query performance, and replication status.
 
-Product managers, QE engineers, and developers can all write test specs -- no Go or test-framework expertise required. The LLM agent handles the implementation details.
+### API contract testing
+
+```bash
+sdt tools add api_call --command "curl -sf -X {{.method}} -H 'Content-Type: application/json' -d '{{.body}}' {{.url}}"
+sdt tools approve api_call
+```
+
+Write specs that verify API contracts: correct status codes, response schemas, error handling, rate limiting, and authentication flows.
+
+### CI/CD pipeline validation
+
+Write specs that verify deployment pipelines: build succeeds, tests pass, artifacts are published, staging deployment is healthy, smoke tests pass before production rollout.
+
+### Infrastructure testing
+
+Add tools for Terraform, Ansible, or cloud CLIs. Write specs that verify infrastructure provisioning, configuration drift detection, and disaster recovery procedures.
+
+## Configuration
+
+### .sdt.yaml
+
+```yaml
+project: myapp                    # Project name
+description: "My application"     # System description for LLM context
+specsDir: sdt/specs               # Test spec directory
+fixturesDir: sdt/fixtures         # Fixture definitions
+toolsDir: sdt/tools               # Custom tool definitions (YAML)
+
+# Extra context appended to LLM system prompts
+context: |
+  Use dedicated tools instead of shell commands where available.
+
+mcpServers:                       # MCP tool servers
+  openshift:
+    command: ./openshift-mcp-server
+    env:
+      KUBECONFIG: /path/to/kubeconfig
+```
+
+### CLI flags
+
+```bash
+sdt run <spec-path>
+  --timeout 30m                   # Default timeout per spec
+  --junit-dir results/            # JUnit XML output directory
+  --no-cache                      # Force re-planning
+  --dry-run                       # Plan only, no execution
+  --fixtures-dir fixtures/        # Override fixtures directory
+  --context "cluster is on AWS"   # Extra LLM context
+  --skip-cleanup                  # Skip cleanup phases
+  --skip-phases pre-suite,cleanup # Skip specific phases
+  --only-phases cleanup           # Run only these phases
+  --tcms                          # Report to Kiwi TCMS
+  --tcms-product NetObserv        # TCMS product name
+  --tcms-plan-id 42               # Run specs matching a TCMS plan
+```
 
 ## Suite and Group Hooks
 
 Organize related tests into suites with shared setup/teardown:
 
 ```
-specs/myproduct/
-  _suite.md                  # Suite-level hooks
-  _group_with_loki.md        # Group hooks for tests with Group: with-loki
-  _group_with_kafka.md       # Group hooks for tests with Group: with-kafka
-  sanity.md                  # Test spec
-  alerts.md                  # Test spec (Group: with-loki)
-  kafka_tls.md               # Test spec (Group: with-kafka)
+sdt/specs/
+  _suite.md                       # Suite-level hooks (runs once)
+  _group_database.md              # Group hooks for tests with Group: database
+  _group_api.md                   # Group hooks for tests with Group: api
+  login-test.md                   # Test spec
+  user-crud.md                    # Test spec (Group: database)
+  search-api.md                   # Test spec (Group: api)
 ```
 
 Execution order:
 
 ```
-Suite Pre-Suite (once)
-  Pre-Suite Validation
-    Suite Pre-Test
-      Suite Pre-Test Validation
-        Group Pre-Test
-          Group Pre-Test Validation
-            Setup -> Steps -> Verify -> Cleanup
-          Group Post-Test
-        Suite Post-Test
-Suite Post-Suite (once)
+Suite Pre-Suite → Pre-Suite Validation
+  ├── Suite Pre-Test → Pre-Test Validation
+  │     ├── Group Pre-Test → Group Pre-Test Validation
+  │     │     └── Setup → Steps → Verify → Cleanup
+  │     │   Group Post-Test
+  │     └── Suite Post-Test
+Suite Post-Suite
 ```
+
+Validation sections (`## Pre-Suite Validation`, `## Pre-Test Validation`) define conditions that must be true after hooks run. Hook errors are tolerated, but validation failures abort execution.
 
 ## Fixtures
 
-Fixtures are parameterized resource definitions with lifecycle instructions:
+Parameterized resource definitions with lifecycle instructions the LLM agent interprets at runtime.
 
-```yaml
-name: flowcollector-default
-description: Default FlowCollector with Direct deployment model
-template: templates/netobserv/flowcollector_v1beta2_template.yaml
-parameters:
-  Namespace: openshift-netobserv
-  DeploymentModel: Direct
-  LokiEnable: "true"
-lifecycle:
-  create: >
-    Use process_template to render the template with all listed parameters.
-    Write the rendered output to a temp file, then use oc_apply to apply it.
-  ready: >
-    Wait for FlowCollector status condition Ready=True on flowcollector/cluster.
-  cleanup: >
-    oc_delete flowcollector cluster
+**Fixture lifecycle:**
+
+```
+sdt fixtures add        → creates fixture (status: draft)
+sdt fixtures validate   → check all fixtures parse correctly
+sdt fixtures approve    → status → approved
+                           ↓
+sdt run                 → only approved fixtures resolved (--include-drafts to override)
 ```
 
-Reference fixtures in a spec's metadata:
+```bash
+# Create a draft fixture
+sdt fixtures add test-database --description "PostgreSQL test database"
+
+# Edit the generated YAML
+vi sdt/fixtures/test-database.yaml
+
+# Validate all fixtures
+sdt fixtures validate
+
+# Approve for use in test runs
+sdt fixtures approve test-database
+
+# List all fixtures
+sdt fixtures list
+```
+
+```
+NAME           STATUS    TEMPLATE  PARAMS  DESCRIPTION
+----           ------    --------  ------  -----------
+test-database  approved  -         2       PostgreSQL test database
+
+Total: 1 fixtures (1 approved, 0 draft)
+```
+
+A fixture definition looks like:
+
+```yaml
+name: test-database
+description: PostgreSQL test database
+status: approved
+parameters:
+  name: testdb
+  port: "5432"
+lifecycle:
+  create: "Create a PostgreSQL database named '${name}' on port ${port}"
+  ready: "Verify the database '${name}' accepts connections"
+  cleanup: "Drop the database '${name}' and remove all data"
+```
+
+Reference in specs:
 
 ```markdown
 ## Metadata
-- Fixtures: [flowcollector-default]
+- Fixtures: [test-database]
 
 ## Setup
-Deploy the FlowCollector using the fixture `flowcollector-default`.
+Deploy the test database using fixture `test-database`.
 ```
 
-## Available Tools
+## CLI Commands
 
-The agent can call these MCP tools during execution:
-
-| Category | Tools |
+| Command | Description |
 |---|---|
-| **OpenShift CLI** | `oc_run`, `oc_apply`, `oc_delete`, `oc_get`, `oc_patch`, `oc_exec`, `oc_logs` |
-| **Resources** | `create_namespace`, `delete_namespace`, `wait_for_condition`, `wait_for_pods_ready` |
-| **Operators** | `deploy_operator`, `process_template` |
-| **Metrics** | `query_metric` (PromQL via thanos-querier) |
-| **Shell** | `shell`, `read_file`, `write_file` |
+| **Project setup** | |
+| `sdt setup <name>` | Set up SDT in current project directory |
+| **Spec lifecycle** | |
+| `sdt specs add <name>` | Create a draft test spec |
+| `sdt specs run <spec>` | Run with section control (`--only`, `--skip`) |
+| `sdt specs approve <spec>` | Approve a draft spec for runs and TCMS |
+| `sdt specs list [dir]` | List all specs with lifecycle status |
+| `sdt validate <specs>` | Validate spec structure (no LLM needed) |
+| `sdt review <spec>` | AI review of spec quality |
+| **Suite management** | |
+| `sdt suite add <name>` | Create a new test suite (directory + hooks) |
+| `sdt suite run <dir>` | Run a suite with section control |
+| `sdt suite list` | List all suites with spec counts |
+| **Fixture lifecycle** | |
+| `sdt fixtures add <name>` | Create a draft fixture definition |
+| `sdt fixtures validate` | Validate all fixture definitions |
+| `sdt fixtures approve <name>` | Approve a draft fixture |
+| `sdt fixtures list` | List all fixtures with status |
+| **Tool lifecycle** | |
+| `sdt tools add <name>` | Create a draft tool definition |
+| `sdt tools test <name>` | Test a tool with sample input |
+| `sdt tools approve <name>` | Approve a draft tool |
+| `sdt tools list` | List all tools (core + default + MCP) |
+| **Execution** | |
+| `sdt run <specs>` | Run approved specs (`--include-drafts` to include all) |
+| `sdt run --dry-run <specs>` | Plan only, no execution |
+| **Cache** | |
+| `sdt cache status` | Check plan cache |
+| `sdt cache clear` | Clear cached plans |
+| **TCMS** | |
+| `sdt tcms sync` | Sync approved specs to Kiwi TCMS |
+| `sdt tcms status` | Check TCMS linkage |
+| `sdt tcms import` | Import test cases from TCMS |
 
 ## Kiwi TCMS Integration
 
 SDT integrates with [Kiwi TCMS](https://kiwitcms.org) for test case management:
 
 ```bash
-# Start local Kiwi TCMS
-docker compose -f docker-compose.kiwi.yml up -d
-
 # Set credentials
 export KIWI_TCMS_URL=https://localhost:8443
 export KIWI_TCMS_USERNAME=admin
 export KIWI_TCMS_PASSWORD=admin
 
 # Sync specs as test cases
-sdt tcms sync --product NetObserv specs/netobserv/
-
-# Check linkage status
-sdt tcms status specs/netobserv/
+sdt tcms sync --product MyApp sdt/specs/
 
 # Run with TCMS reporting
-sdt run --tcms --tcms-product NetObserv specs/netobserv/
+sdt run --tcms --tcms-product MyApp sdt/specs/
 
-# Import test cases from TCMS
-sdt tcms import --plan-id 1 --output specs/imported/
+# Import test cases from TCMS plan
+sdt tcms import --plan-id 1 --output sdt/specs/imported/
 ```
 
 ## Contributing
 
-### Development setup
-
 ```bash
-git clone https://github.com/openshift/sdt.git
+git clone https://github.com/sdt-project/sdt.git
 cd sdt
 make build
 make test
 ```
-
-### Build commands
 
 | Command | Description |
 |---|---|
 | `make build` | Build binary to `bin/sdt` |
 | `make install` | Install to `$GOPATH/bin` |
 | `make test` | Run all tests (verbose, no caching) |
-| `make test-short` | Run tests in short mode |
 | `make lint` | Run `go vet` |
 | `make fmt` | Format code with `gofmt` |
-| `make fmt-check` | Check formatting (CI-friendly) |
-
-Run a single test:
-
-```bash
-go test ./pkg/cache/... -v -count=1 -run TestStorePlanCaching
-```
-
-### Writing test specs
-
-1. Create a new `.md` file in the appropriate `specs/` directory.
-2. Follow the spec format: `# Test:` title, `## Metadata`, `## Setup`, `## Steps`, `## Verify`, `## Cleanup`.
-3. Validate with `sdt validate`.
-4. Review with `sdt review` for AI-assisted quality feedback.
-5. Run with `sdt run --dry-run` first, then `sdt run`.
-
-### Adding MCP tools
-
-1. Define the tool handler function in the appropriate file under `pkg/tools/`.
-2. Register it in `pkg/tools/registry.go` via `RegisterAllTools()`.
-3. Provide a JSON schema for the tool's input parameters.
-4. Return a `*ToolResult` from the handler.
-
-### Adding templates
-
-Place parameterized YAML templates in the `templates/` directory, organized by component. Templates support Go `text/template` syntax and `oc process` parameter substitution.
-
-### Adding fixtures
-
-Create a YAML file in `fixtures/` with `name`, `description`, `template`, `parameters`, and `lifecycle` fields. The lifecycle instructions are natural language that the LLM agent follows at runtime.
-
-### Code style
-
-- Run `make fmt` before committing.
-- Run `make lint` to catch issues.
-- Run `make test` to ensure nothing is broken.
 
 ## License
 

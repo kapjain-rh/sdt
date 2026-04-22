@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/openshift/sdt/pkg/agent"
-	"github.com/openshift/sdt/pkg/cache"
-	"github.com/openshift/sdt/pkg/fixture"
-	"github.com/openshift/sdt/pkg/llm"
-	"github.com/openshift/sdt/pkg/log"
-	"github.com/openshift/sdt/pkg/reporter"
-	"github.com/openshift/sdt/pkg/spec"
-	"github.com/openshift/sdt/pkg/tools"
+	"github.com/sdt-project/sdt/pkg/agent"
+	"github.com/sdt-project/sdt/pkg/cache"
+	"github.com/sdt-project/sdt/pkg/fixture"
+	"github.com/sdt-project/sdt/pkg/llm"
+	"github.com/sdt-project/sdt/pkg/log"
+	"github.com/sdt-project/sdt/pkg/reporter"
+	"github.com/sdt-project/sdt/pkg/spec"
+	"github.com/sdt-project/sdt/pkg/tools"
 )
 
 // Runner orchestrates the full test lifecycle:
@@ -24,28 +24,34 @@ type Runner struct {
 	cacheStore     *cache.Store
 	reporter       reporter.Reporter
 	defaultTimeout time.Duration
-	noCache        bool
-	dryRun         bool
-	extraContext   string
-	skipCleanup    bool
-	skipPhases     map[string]bool
-	onlyPhases     map[string]bool
+	noCache           bool
+	dryRun            bool
+	extraContext      string
+	skipCleanup       bool
+	skipPhases        map[string]bool
+	onlyPhases        map[string]bool
+	constraints       *tools.ToolConstraints
+	systemDescription string
+	promptContext     *agent.PromptContext
 }
 
 // Config holds runner configuration.
 type Config struct {
-	LLMClient      *llm.Client
-	ToolRegistry   *tools.Registry
-	FixtureManager *fixture.Manager
-	CacheStore     *cache.Store
-	Reporter       reporter.Reporter
-	DefaultTimeout time.Duration
-	NoCache        bool
-	DryRun         bool
-	ExtraContext   string
-	SkipCleanup    bool
-	SkipPhases     []string
-	OnlyPhases     []string
+	LLMClient         *llm.Client
+	ToolRegistry      *tools.Registry
+	Constraints       *tools.ToolConstraints
+	FixtureManager    *fixture.Manager
+	CacheStore        *cache.Store
+	Reporter          reporter.Reporter
+	DefaultTimeout    time.Duration
+	NoCache           bool
+	DryRun            bool
+	ExtraContext      string
+	SkipCleanup       bool
+	SkipPhases        []string
+	OnlyPhases        []string
+	SystemDescription string // e.g., "OpenShift cluster", "Kafka cluster", "web application"
+	ProjectContext    string // project-specific prompt fragment appended to system prompts
 }
 
 // NewRunner creates a runner with the given configuration.
@@ -65,19 +71,36 @@ func NewRunner(cfg Config) *Runner {
 	for _, p := range cfg.OnlyPhases {
 		only[p] = true
 	}
+	sysDesc := cfg.SystemDescription
+	if sysDesc == "" {
+		sysDesc = "target system"
+	}
+
+	var pctx *agent.PromptContext
+	if cfg.ToolRegistry != nil || cfg.Constraints != nil {
+		pctx = &agent.PromptContext{
+			Registry:       cfg.ToolRegistry,
+			Constraints:    cfg.Constraints,
+			ProjectContext: cfg.ProjectContext,
+		}
+	}
+
 	return &Runner{
-		llmClient:      cfg.LLMClient,
-		toolRegistry:   cfg.ToolRegistry,
-		fixtureManager: cfg.FixtureManager,
-		cacheStore:     cfg.CacheStore,
-		reporter:       cfg.Reporter,
-		defaultTimeout: timeout,
-		noCache:        cfg.NoCache,
-		dryRun:         cfg.DryRun,
-		extraContext:   cfg.ExtraContext,
-		skipCleanup:    cfg.SkipCleanup,
-		skipPhases:     skip,
-		onlyPhases:     only,
+		llmClient:         cfg.LLMClient,
+		toolRegistry:      cfg.ToolRegistry,
+		fixtureManager:    cfg.FixtureManager,
+		cacheStore:        cfg.CacheStore,
+		reporter:          cfg.Reporter,
+		defaultTimeout:    timeout,
+		noCache:           cfg.NoCache,
+		dryRun:            cfg.DryRun,
+		extraContext:      cfg.ExtraContext,
+		skipCleanup:       cfg.SkipCleanup,
+		skipPhases:        skip,
+		onlyPhases:        only,
+		constraints:       cfg.Constraints,
+		systemDescription: sysDesc,
+		promptContext:     pctx,
 	}
 }
 
@@ -239,8 +262,8 @@ func (r *Runner) RunSpec(ctx context.Context, testSpec *spec.TestSpec, suiteSpec
 
 		// Create agents
 		memoryAgent := agent.NewMemoryAgent(r.cacheStore)
-		plannerAgent := agent.NewPlannerAgent(r.llmClient, r.cacheStore)
-		executorAgent := agent.NewExecutorAgent(r.llmClient, r.toolRegistry)
+		plannerAgent := agent.NewPlannerAgent(r.llmClient, r.cacheStore).WithPromptContext(r.promptContext)
+		executorAgent := agent.NewExecutorAgent(r.llmClient, r.toolRegistry).WithPromptContext(r.promptContext)
 
 		// --- Resolve fixtures ---
 		var fixtureDefs []*fixture.Definition
@@ -418,8 +441,10 @@ After investigating, provide your diagnosis as plain text (not JSON).`, testName
 		})
 	}
 
+	systemPrompt := agent.BuildSystemPrompt(agent.DiagnosticSystemPrompt, r.promptContext)
+
 	req := &llm.Request{
-		System: agent.DiagnosticSystemPrompt,
+		System: systemPrompt,
 		Messages: []llm.Message{
 			{
 				Role: llm.RoleUser,
@@ -472,7 +497,7 @@ func (r *Runner) runHookPhase(ctx context.Context, phaseName string, steps []spe
 	hookStart := time.Now()
 
 	// Phase 1: Plan (with caching)
-	plannerAgent := agent.NewPlannerAgent(r.llmClient, r.cacheStore)
+	plannerAgent := agent.NewPlannerAgent(r.llmClient, r.cacheStore).WithPromptContext(r.promptContext)
 	plan, err := plannerAgent.PlanHooks(ctx, phaseName, steps, r.extraContext)
 	if err != nil {
 		log.Errorf("HOOK", "%s planning failed after %s: %v", phaseName, time.Since(hookStart), err)
@@ -491,7 +516,7 @@ func (r *Runner) runHookPhase(ctx context.Context, phaseName string, steps []spe
 	log.Infof("HOOK", "%s plan ready — %d phases, %d steps", phaseName, len(plan.Phases), totalSteps)
 
 	// Phase 2: Execute the plan
-	executorAgent := agent.NewExecutorAgent(r.llmClient, r.toolRegistry)
+	executorAgent := agent.NewExecutorAgent(r.llmClient, r.toolRegistry).WithPromptContext(r.promptContext)
 	result, err := executorAgent.Execute(ctx, plan, r.extraContext, false)
 	if err != nil {
 		log.Errorf("HOOK", "%s execution FAILED after %s: %v", phaseName, time.Since(hookStart), err)
@@ -562,12 +587,12 @@ func (r *Runner) runValidation(ctx context.Context, phaseName string, steps []sp
 		checkList += fmt.Sprintf("%d. %s\n", i+1, step.RawText)
 	}
 
-	prompt := fmt.Sprintf(`Validate the following conditions against the OpenShift cluster.
+	prompt := fmt.Sprintf(`Validate the following conditions against the %s.
 Each condition MUST be true. Check each one and report PASS or FAIL.
 
 %s
 
-For each condition, use the available tools to verify it. If ANY condition fails, clearly state which one failed and why.`, checkList)
+For each condition, use the available tools to verify it. If ANY condition fails, clearly state which one failed and why.`, r.systemDescription, checkList)
 
 	if r.extraContext != "" {
 		prompt += fmt.Sprintf("\n\nAdditional Context:\n%s", r.extraContext)
@@ -583,8 +608,10 @@ For each condition, use the available tools to verify it. If ANY condition fails
 		})
 	}
 
+	systemPrompt := agent.BuildSystemPrompt(agent.ExecutorSystemPrompt, r.promptContext)
+
 	req := &llm.Request{
-		System: agent.ExecutorSystemPrompt,
+		System: systemPrompt,
 		Messages: []llm.Message{
 			{
 				Role: llm.RoleUser,

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/openshift/sdt/pkg/tools"
+	"github.com/sdt-project/sdt/pkg/tools"
 )
 
 // Server exposes MCP tools for use by LLM agents.

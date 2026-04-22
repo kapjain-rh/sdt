@@ -8,19 +8,22 @@ import (
 	"os"
 	"os/exec"
 	"text/template"
-
-	"github.com/openshift/sdt/pkg/tools"
 )
+
+// CommandRunner is the interface needed to run CLI commands for template processing.
+type CommandRunner interface {
+	Run(ctx context.Context, args ...string) (stdout string, stderr string, err error)
+}
 
 // Processor handles template rendering and processing.
 type Processor struct {
-	ocClient *tools.OCClient
+	runner CommandRunner
 }
 
 // NewProcessor creates a new template processor.
-func NewProcessor(ocClient *tools.OCClient) *Processor {
+func NewProcessor(runner CommandRunner) *Processor {
 	return &Processor{
-		ocClient: ocClient,
+		runner: runner,
 	}
 }
 
@@ -39,7 +42,7 @@ func (p *Processor) ProcessOCTemplate(ctx context.Context, templatePath string, 
 		args = append(args, "-n", namespace)
 	}
 
-	stdout, stderr, err := p.ocClient.Run(ctx, args...)
+	stdout, stderr, err := p.runner.Run(ctx, args...)
 	if err != nil {
 		return "", fmt.Errorf("oc process failed: %w\nstderr: %s", err, stderr)
 	}

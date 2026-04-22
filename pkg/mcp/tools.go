@@ -3,8 +3,8 @@ package mcp
 import (
 	"encoding/json"
 
-	"github.com/openshift/sdt/pkg/llm"
-	"github.com/openshift/sdt/pkg/tools"
+	"github.com/sdt-project/sdt/pkg/llm"
+	"github.com/sdt-project/sdt/pkg/tools"
 )
 
 // ConvertToLLMTools converts the tool registry's tools to llm.ToolDefinition format

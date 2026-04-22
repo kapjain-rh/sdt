@@ -6,9 +6,9 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/openshift/sdt/pkg/cache"
-	"github.com/openshift/sdt/pkg/llm"
-	"github.com/openshift/sdt/pkg/template"
+	"github.com/sdt-project/sdt/pkg/cache"
+	"github.com/sdt-project/sdt/pkg/llm"
+	"github.com/sdt-project/sdt/pkg/template"
 )
 
 // CodingAgent generates and validates YAML templates using the LLM.

@@ -27,6 +27,7 @@ type Metadata struct {
 	Timeout  time.Duration
 	Group    string   // Group name for group-level hooks (e.g., "with-loki")
 	Fixtures []string // Fixture names to load (e.g., ["flowcollector-default", "test-traffic"])
+	Status   string   // "draft" or "approved" (empty treated as "approved" for backward compat)
 }
 
 // StepDef is a single step parsed from markdown.
@@ -45,6 +46,19 @@ type TestSpec struct {
 	Steps    []StepDef
 	Verify   []StepDef
 	Cleanup  []StepDef
+}
+
+// EffectiveStatus returns the spec status, defaulting to "approved" if empty.
+func (s *TestSpec) EffectiveStatus() string {
+	if s.Metadata.Status == "" {
+		return "approved"
+	}
+	return s.Metadata.Status
+}
+
+// IsDraft returns true if the spec is in draft status.
+func (s *TestSpec) IsDraft() bool {
+	return s.EffectiveStatus() == "draft"
 }
 
 // TestName returns the name in openshift-tests-private convention:

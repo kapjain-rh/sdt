@@ -1,0 +1,3 @@
+project: webapp
+specsDir: projects/webapp/specs
+fixturesDir: projects/webapp/fixtures

@@ -258,6 +258,8 @@ func parseMetadataLine(line string, m *Metadata) {
 		m.Group = value
 	case "fixtures":
 		m.Fixtures = parseList(value)
+	case "status":
+		m.Status = strings.ToLower(value)
 	}
 }
 

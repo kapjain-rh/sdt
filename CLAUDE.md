@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is SDT?
 
-SDT (Spec-Driven Testing) is an AI-powered test framework for OpenShift. Tests are written as Markdown specs in natural language. An LLM agent (Claude) reads each spec, plans execution steps, and runs them autonomously against a live OpenShift cluster via MCP tools.
+SDT (Spec-Driven Testing) is a product-agnostic, AI-powered test framework. Tests are written as Markdown specs in natural language. An LLM agent reads each spec, plans execution steps, and runs them autonomously against a target system via MCP tools. The framework is extensible — project-specific tools, constraints, and prompts are registered by project packages (e.g., `projects/openshift/` for OpenShift testing).
 
 ## Build and Development Commands
 
@@ -47,7 +47,7 @@ The binary version is injected via `-ldflags "-X main.version=..."` from `git de
 4. **Reviewer Agent** (`pkg/agent/reviewer.go`) — reviews spec quality or analyzes execution failures
 5. **Coding Agent** (`pkg/agent/coding.go`) — generates YAML templates from natural language
 
-System prompts for all agents live in `pkg/agent/prompts.go`.
+System prompts for all agents live in `pkg/agent/prompts.go`. Dynamic prompt generation combines base prompts with registered tools, constraints, and project context via `pkg/agent/prompt_builder.go` (`BuildSystemPrompt`).
 
 ### LLM Client (`pkg/llm/`)
 
@@ -59,15 +59,63 @@ The key method is `RunAgentLoop` — a multi-turn loop that sends messages, exec
 
 ### Tool Registry (`pkg/tools/`)
 
-MCP tools that the LLM agent can call during execution. All tools are registered via `RegisterAllTools()`:
+Framework-level tool infrastructure. Each tool has a `ToolHandler` function, a JSON schema for input, and returns `*ToolResult`. The `Tool` struct includes `PromptHint` and `Category` fields for prompt generation.
 
-- **OC tools** (`oc.go`): `oc_run`, `oc_apply`, `oc_delete`, `oc_get`, `oc_patch`, `oc_exec`, `oc_logs`
-- **Resource tools** (`resource.go`): `create_namespace`, `delete_namespace`, `wait_for_condition`, `wait_for_pods_ready`
-- **Operator tools** (`operator.go`): `deploy_operator`, `process_template`
-- **Metrics tools** (`metrics.go`): `query_metric` (PromQL via thanos-querier)
+**Core tools** (registered via `RegisterCoreTools()`):
 - **Shell tools** (`shell.go`): `shell`, `read_file`, `write_file`
+- **Runtime tools** (`runtime.go`): `python`, `node`, `npm`, `npx`, `go_run`, `cypress`, `check_runtimes`
 
-Each tool has a `ToolHandler` function, a JSON schema for input, and returns `*ToolResult`.
+**Constraints** (`constraints.go`): Centralized `ToolConstraints` system with `Check()`, `CheckShell()`, `BlockShellCommand()`, `RedirectTool()` helpers. Framework ships generic constraints (block filesystem root search, block sleep loops). Projects add their own via `AddConstraint()`.
+
+### Project System (`pkg/project/`, `pkg/config/`)
+
+Projects are pluggable integrations that register tools, constraints, and prompts for a specific target system. The `Project` interface (`pkg/project/project.go`) defines: `Name()`, `Description()`, `Setup(registry, constraints)`, `PromptFragment()`, `SystemDescription()`, `Detect()`.
+
+Projects self-register via `init()` using `project.Register()` (same pattern as `database/sql` drivers). The CLI selects the active project via:
+1. `--project` flag (highest priority)
+2. `.sdt.yaml` config file (`project:` field)
+3. Auto-detection (checks which project's prerequisites are available)
+
+Run `sdt projects` to list available projects and their detection status.
+
+**Config file** (`.sdt.yaml` in working directory, optional):
+```yaml
+project: openshift
+specsDir: specs/
+fixturesDir: fixtures/
+```
+
+### Project Tools (`projects/`)
+
+Project-specific tools live in separate packages under `projects/`. Each project implements `project.Project` and registers via `init()`.
+
+**OpenShift** (`projects/openshift/`):
+- `project.go`: `OpenShiftProject` implementing `project.Project`, auto-registers via `init()`
+- `tools.go`: `OCClient`, `oc_run`, `oc_apply`, `oc_delete`, `oc_get`, `oc_patch`, `oc_exec`, `oc_logs`, `create_namespace`, `delete_namespace`, `wait_for_condition`, `wait_for_pods_ready`, `deploy_operator`, `process_template`, `query_metric`
+- `constraints.go`: `AddOpenShiftConstraints()` — blocks shell usage of oc subcommands, redirects oc_run wait to wait_for_condition
+- `prompts.go`: `PromptFragment` — OpenShift-specific LLM guidance
+
+**Adding a new project** — two paths:
+
+1. **External (MCP-based):** Run `sdt setup <name>` from any project directory. Define tools as MCP servers (any language), configure in `.sdt.yaml` under `mcpServers`. No Go code or SDT recompilation needed.
+
+2. **Compiled-in (Go-based):** Run `sdt init <name>` from the SDT source tree to scaffold Go code under `projects/<name>/`, then add a blank import in `cmd/sdt/run.go`. Use this when you need complex tool logic tightly integrated with SDT.
+
+### MCP Client (`pkg/mcp/client.go`, `pkg/mcp/bridge.go`)
+
+SDT acts as an MCP client, connecting to external MCP servers defined in `.sdt.yaml`. On startup, it spawns each server subprocess, performs the JSON-RPC 2.0 handshake (`initialize`), discovers tools via `tools/list`, and registers them into the tool registry. Tool calls are proxied to the server via `tools/call`.
+
+MCP servers can be written in any language (Go, Python, TypeScript, bash) using the standard MCP protocol over stdio. This is the primary mechanism for adding project-specific tools without modifying SDT source.
+
+Config example:
+```yaml
+mcpServers:
+  myapp:
+    command: python
+    args: [-m, myapp_mcp_server]
+    env:
+      API_URL: http://localhost:8080
+```
 
 ### Spec System (`pkg/spec/`)
 
@@ -83,7 +131,7 @@ Execution order: Suite Pre-Suite → Pre-Suite Validation → (Suite Pre-Test �
 
 ### Runner (`pkg/runner/runner.go`)
 
-Orchestrates the full lifecycle. `RunSuite` iterates test specs; `RunSpec` wires up agents, resolves fixtures, runs planning/execution, and collects results. Hook phases are also executed through the LLM agent loop.
+Orchestrates the full lifecycle. `RunSuite` iterates test specs; `RunSpec` wires up agents, resolves fixtures, runs planning/execution, and collects results. Hook phases are also executed through the LLM agent loop. Configurable via `Config` struct: `SystemDescription` (e.g., "OpenShift cluster"), `ProjectContext` (prompt fragment), `Constraints`, `SkipPhases`/`OnlyPhases` for phase filtering.
 
 ### Fixtures (`pkg/fixture/`, `fixtures/`)
 

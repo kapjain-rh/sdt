@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/openshift/sdt/pkg/log"
-	"github.com/openshift/sdt/pkg/spec"
+	"github.com/sdt-project/sdt/pkg/log"
+	"github.com/sdt-project/sdt/pkg/spec"
 )
 
 // SyncSpecs syncs all specs in a suite to Kiwi TCMS as test cases,
@@ -50,6 +50,11 @@ func SyncSpecs(client *KiwiClient, suite *spec.Suite, productName string) (*Sync
 	result := &SyncResult{PlanID: planID}
 
 	for _, testSpec := range suite.Tests {
+		if testSpec.IsDraft() {
+			log.Debugf("TCMS", "Skipping draft spec %q", testSpec.TestName())
+			continue
+		}
+
 		priorityID, _ := client.GetPriority(testSpec.Metadata.Priority)
 		if priorityID == 0 {
 			priorityID, _ = client.GetPriority("")

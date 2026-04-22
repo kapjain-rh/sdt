@@ -1,23 +1,23 @@
 # SDT Quickstart Guide
 
-SDT (Spec-Driven Testing) is an AI-powered test framework for OpenShift.
+SDT (Spec-Driven Testing) is a product-agnostic, AI-powered test framework.
 Tests are written as Markdown specs in natural language. An LLM agent reads
-each spec, plans the execution steps, and runs them autonomously against a
-live OpenShift cluster.
+each spec, plans the execution steps, and runs them autonomously against any
+target system via MCP tools.
 
 ## Prerequisites
 
 - Go 1.21+
-- `oc` CLI logged into an OpenShift cluster (`oc whoami` should succeed)
 - An Anthropic API key **or** Google Vertex AI credentials for Claude
 - Docker (optional, for Kiwi TCMS)
 
 ## Install
 
 ```bash
-git clone https://github.com/openshift/sdt.git
+git clone https://github.com/sdt-project/sdt.git
 cd sdt
-go build -o bin/sdt ./cmd/sdt/
+make build        # builds binary to bin/sdt
+make install      # or install to $GOPATH/bin
 ```
 
 ## Environment Variables
@@ -27,41 +27,127 @@ go build -o bin/sdt ./cmd/sdt/
 | `ANTHROPIC_API_KEY` | Yes* | Anthropic API key |
 | `ANTHROPIC_VERTEX_PROJECT_ID` | Yes* | Vertex AI project (alternative to API key) |
 | `CLOUD_ML_REGION` | Yes* | Vertex AI region (with Vertex) |
+| `SDT_PROVIDER` | No | LLM provider: `claude` (default) or `gemini` |
 | `SDT_MODEL` | No | Model override (e.g. `claude-sonnet-4-20250514`) |
 | `SDT_LOG_LEVEL` | No | `debug`, `info`, `warn`, `error` (default: `info`) |
-| `KUBECONFIG` | No | Path to kubeconfig (default: `~/.kube/config`) |
 
 \* Either `ANTHROPIC_API_KEY` or the Vertex pair is required.
+
+## Set Up SDT in Your Project
+
+```bash
+cd my-project
+sdt setup myapp
+```
+
+This creates:
+
+```
+my-project/
+  .sdt.yaml              # Configuration
+  sdt/
+    specs/                # Test specifications
+      _suite.md           # Suite-level hooks
+      smoke-test.md       # Sample test
+    fixtures/             # Fixture definitions
+      sample.yaml
+    tools/                # Custom tool definitions (YAML)
+    mcp/                  # Third-party MCP server guide
+      README.md
+```
+
+## Add Tools
+
+SDT ships with core tools (shell, file I/O, Python, Node, Go). Add project-specific tools via the default MCP server or third-party MCP servers.
+
+### Default MCP server (YAML tool definitions)
+
+```bash
+# Create a draft tool
+sdt tools add check_health \
+  --description "Check application health" \
+  --command "curl -sf {{.endpoint}}/health"
+
+# Edit the YAML to refine parameters
+vi sdt/tools/check_health.yaml
+
+# Test it
+sdt tools test check_health --input '{"endpoint": "http://localhost:8080"}'
+
+# Approve for use in test runs
+sdt tools approve check_health
+```
+
+The generated YAML:
+
+```yaml
+name: check_health
+description: Check application health
+category: myapp
+status: approved
+input:
+  endpoint:
+    type: string
+    description: Base URL of the API
+    required: true
+command: curl -sf {{.endpoint}}/health
+```
+
+### Third-party MCP servers
+
+For complex tools, write an MCP server in any language and configure it in `.sdt.yaml`:
+
+```yaml
+mcpServers:
+  myapp:
+    command: python
+    args: [sdt/mcp/myapp_server.py]
+    env:
+      API_URL: http://localhost:8080
+```
+
+### List all tools
+
+```bash
+sdt tools list
+```
+
+```
+NAME            SOURCE          STATUS    DESCRIPTION
+shell           core            -         Execute a local shell command
+read_file       core            -         Read the contents of a local file
+check_health    default         approved  Check application health
+myapp_deploy    mcp:myapp       -         Deploy application version
+```
 
 ## Writing a Test Spec
 
 A spec is a Markdown file with a fixed structure:
 
 ```markdown
-# Test: Verify My Feature
+# Test: Verify API Health
 
 ## Metadata
 - Author: yourname
 - Priority: High
-- CaseID: 12345
-- Labels: [Serial]
-- Timeout: 15m
-- Group: with-loki
-- Fixtures: [flowcollector-default]
+- Labels: [Smoke]
+- Timeout: 5m
 
 ## Setup
-Deploy the FlowCollector using the fixture `flowcollector-default`.
+Verify the application server is running.
 
 ## Steps
-1. Verify all pods in `openshift-netobserv` namespace are Running.
-2. Check that the console plugin deployment is available.
+1. Call the health endpoint and verify it returns HTTP 200.
+2. Verify the response contains "status": "healthy".
+3. Check that response time is under 500ms.
 
 ## Verify
-- All pods are Running with all containers ready.
-- FlowCollector CR status is Ready.
+- Health endpoint returned 200.
+- Response body indicates healthy status.
+- Response time is acceptable.
 
 ## Cleanup
-Delete the FlowCollector CR and wait for all pods to terminate.
+No cleanup required.
 ```
 
 ### Sections
@@ -85,249 +171,149 @@ Delete the FlowCollector CR and wait for all pods to terminate.
 | `Labels` | list | Tags like `[Serial]`, `[Disruptive]`, `[Slow]` |
 | `Timeout` | duration | Go duration, e.g. `15m`, `1h30m` |
 | `Group` | string | Group name (matches `_group_<name>.md`) |
-| `Fixtures` | list | Fixture names from `fixtures/` directory |
+| `Fixtures` | list | Fixture names from fixtures directory |
 
 ## Suite Structure
 
 Organize specs in a directory with optional suite/group files:
 
 ```
-specs/myproduct/
+sdt/specs/
   _suite.md              # Suite-level hooks (pre-suite, post-suite, pre-test, post-test)
-  _group_with_loki.md    # Group hooks for tests with Group: with-loki
-  _group_with_kafka.md   # Group hooks for tests with Group: with-kafka
-  sanity.md              # Test spec
-  alerts.md              # Test spec
-  upgrade.md             # Test spec
+  _group_database.md     # Group hooks for tests with Group: database
+  _group_api.md          # Group hooks for tests with Group: api
+  login-test.md          # Test spec
+  user-crud.md           # Test spec (Group: database)
+  search-api.md          # Test spec (Group: api)
 ```
-
-- `_suite.md` defines `Pre-Suite`, `Pre-Test`, `Post-Test`, `Post-Suite` hooks
-  that run around every test.
-- `_group_<name>.md` defines `Pre-Test` / `Post-Test` hooks for tests in that group.
 
 Execution order for each test:
 
 ```
-Suite Pre-Suite  (once)
-  Suite Pre-Test
-    Group Pre-Test
-      Setup → Steps → Verify → Cleanup
-    Group Post-Test
-  Suite Post-Test
+Suite Pre-Suite (once)
+  → Pre-Suite Validation
+    Suite Pre-Test
+      → Pre-Test Validation
+        Group Pre-Test
+          → Group Pre-Test Validation
+            Setup → Steps → Verify → Cleanup
+          Group Post-Test
+        Suite Post-Test
 Suite Post-Suite (once)
 ```
+
+Validation sections define conditions that must be true after hooks run.
+Hook errors are tolerated, but validation failures abort execution.
 
 ## Running Tests
 
 ```bash
 # Run all specs in a directory
-sdt run specs/myproduct/
+sdt run sdt/specs/
 
 # Run a single spec
-sdt run specs/myproduct/sanity.md
+sdt run sdt/specs/smoke-test.md
 
 # Dry run (plan only, no execution)
-sdt run --dry-run specs/myproduct/sanity.md
+sdt run --dry-run sdt/specs/smoke-test.md
 
 # Skip cached plans
-sdt run --no-cache specs/myproduct/sanity.md
+sdt run --no-cache sdt/specs/
 
 # Custom timeout
-sdt run --timeout 1h specs/myproduct/
+sdt run --timeout 1h sdt/specs/
 
-# JUnit XML output
-sdt run --junit-dir results/ specs/myproduct/
+# JUnit XML output for CI
+sdt run --junit-dir results/ sdt/specs/
+
+# Extra context for the LLM
+sdt run --context "API is running on port 3000" sdt/specs/
 
 # Debug logging
-SDT_LOG_LEVEL=debug sdt run specs/myproduct/sanity.md
+SDT_LOG_LEVEL=debug sdt run sdt/specs/smoke-test.md
 ```
 
 ## Other Commands
 
 ```bash
 # List all specs
-sdt list specs/myproduct/
-sdt list --format json specs/myproduct/
+sdt list sdt/specs/
 
-# Validate spec structure (no cluster or LLM needed)
-sdt validate specs/myproduct/
+# Validate spec structure (no LLM needed)
+sdt validate sdt/specs/
 
 # Review spec quality with AI
-sdt review specs/myproduct/sanity.md
+sdt review sdt/specs/smoke-test.md
 
 # Cache management
-sdt cache status specs/myproduct/
+sdt cache status sdt/specs/
 sdt cache clear
-sdt cache clear specs/myproduct/sanity.md
+
+# List registered projects
+sdt projects
 ```
 
 ## Fixtures
 
-Fixtures are parameterized resource definitions in `fixtures/`. Each fixture
-has a template path, parameters, and lifecycle instructions that the LLM agent
-follows.
+Fixtures are parameterized resource definitions with lifecycle instructions
+that the LLM agent follows at runtime:
 
 ```yaml
-name: flowcollector-default
-description: Default FlowCollector with Direct deployment model
-template: templates/netobserv/flowcollector_v1beta2_template.yaml
+name: test-database
+description: PostgreSQL test database
 parameters:
-  Namespace: openshift-netobserv
-  DeploymentModel: Direct
-  LokiEnable: "true"
+  name: testdb
+  port: "5432"
 lifecycle:
-  create: >
-    Use process_template to render the template with all listed parameters.
-    Write the rendered output to a temp file, then use oc_apply to apply it.
-  ready: >
-    Wait for FlowCollector status condition Ready=True on flowcollector/cluster.
-  cleanup: >
-    oc_delete flowcollector cluster
+  create: "Create a PostgreSQL database named '${name}' on port ${port}"
+  ready: "Verify the database '${name}' accepts connections"
+  cleanup: "Drop the database '${name}' and remove all data"
 ```
 
 Reference a fixture in a spec's metadata:
 
 ```markdown
 ## Metadata
-- Fixtures: [flowcollector-default]
+- Fixtures: [test-database]
 
 ## Setup
-Deploy the FlowCollector using the fixture `flowcollector-default`.
+Deploy the test database using fixture `test-database`.
 ```
 
-## Kiwi TCMS Integration
+## Configuration Reference
 
-SDT integrates with [Kiwi TCMS](https://kiwitcms.org) for test case management
-and result reporting.
+### .sdt.yaml
 
-### Start a Local Kiwi TCMS Instance
+```yaml
+project: myapp
+specsDir: sdt/specs
+fixturesDir: sdt/fixtures
+toolsDir: sdt/tools
 
-```bash
-docker compose -f docker-compose.kiwi.yml up -d
+mcpServers:
+  myapp:
+    command: python
+    args: [-m, myapp_mcp_server]
+    env:
+      API_URL: http://localhost:8080
 ```
 
-This starts Kiwi TCMS at `https://localhost:8443` with a MariaDB backend.
+### CLI Flags for `sdt run`
 
-First-time setup:
-
-```bash
-# Run database migrations
-docker exec sdt-kiwi-tcms /Kiwi/manage.py migrate --run-syncdb
-
-# Create admin user
-docker exec sdt-kiwi-tcms /Kiwi/manage.py createsuperuser \
-  --username admin --email admin@example.com --noinput
-
-# Set password
-docker exec sdt-kiwi-tcms /Kiwi/manage.py shell -c \
-  "from django.contrib.auth.models import User; u = User.objects.get(username='admin'); u.set_password('admin'); u.save()"
-```
-
-Then create a Product, Version, and Category via the web UI at
-`https://localhost:8443`, or via JSON-RPC:
-
-```bash
-curl -sk https://localhost:8443/json-rpc/ \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"Classification.create","params":[{"name":"OpenShift"}],"id":1}'
-
-curl -sk https://localhost:8443/json-rpc/ \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"Product.create","params":[{"name":"NetObserv","classification":1}],"id":2}'
-
-curl -sk https://localhost:8443/json-rpc/ \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"Version.create","params":[{"value":"4.18","product":1}],"id":3}'
-
-curl -sk https://localhost:8443/json-rpc/ \
-  -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"Category.create","params":[{"name":"Functional","product":1}],"id":4}'
-```
-
-### Set TCMS Environment Variables
-
-```bash
-export KIWI_TCMS_URL=https://localhost:8443
-export KIWI_TCMS_USERNAME=admin
-export KIWI_TCMS_PASSWORD=admin
-```
-
-### Sync Specs to TCMS
-
-Upload all specs as test cases and create a test plan:
-
-```bash
-sdt tcms sync --product NetObserv specs/netobserv/
-```
-
-This will:
-- Create (or update) a test case in Kiwi TCMS for each spec
-- Create a test plan named "SDT - <suite name>"
-- Add all cases to the plan
-- Update each spec file's `CaseID` field with the Kiwi TCMS case ID
-
-### Check Linkage
-
-Verify that spec CaseIDs map to existing Kiwi TCMS test cases:
-
-```bash
-sdt tcms status specs/netobserv/
-```
-
-Output:
-
-```
-[+] Sanity Test NetObserv (CaseID: 58) — linked
-[~] My New Test (CaseID: 99999) — Case 99999 not found in Kiwi TCMS
-[?] Untracked Test (CaseID: ) — No CaseID in spec metadata
-```
-
-### Run Tests with TCMS Reporting
-
-Run tests and report results to Kiwi TCMS in real-time:
-
-```bash
-# Create a new test run automatically
-sdt run --tcms --tcms-product NetObserv specs/netobserv/
-
-# Report to an existing test run
-sdt run --tcms --tcms-run-id 42 specs/netobserv/
-
-# With a custom build name
-sdt run --tcms --tcms-product NetObserv --tcms-build "4.18-nightly" specs/netobserv/
-```
-
-Results appear in the Kiwi TCMS web UI as PASSED, FAILED, or WAIVED per test
-execution within the test run.
-
-### Import Test Cases from TCMS
-
-Generate spec stubs from an existing Kiwi TCMS test plan:
-
-```bash
-sdt tcms import --plan-id 1 --output specs/imported/
-```
-
-### Stop Kiwi TCMS
-
-```bash
-docker compose -f docker-compose.kiwi.yml down      # stop containers
-docker compose -f docker-compose.kiwi.yml down -v    # stop + delete data
-```
-
-## How It Works
-
-When you run `sdt run`, the following pipeline executes for each spec:
-
-1. **Memory Agent** checks the plan cache for a previously generated plan.
-2. **Planner Agent** reads the spec and creates a step-by-step execution plan
-   (or uses the cached plan).
-3. **Executor Agent** runs each plan step in auto-pilot mode using tools:
-   `oc_run`, `oc_apply`, `oc_get`, `oc_delete`, `process_template`,
-   `wait_for_condition`, `wait_for_pods_ready`, `shell`, etc.
-4. Each step is validated after execution.
-5. Results are reported to the console, JUnit XML, and/or Kiwi TCMS.
-
-The agent loop sends messages to Claude, receives tool call requests, executes
-them against the cluster, and returns results — repeating until the agent
-signals completion.
+| Flag | Default | Description |
+|---|---|---|
+| `--timeout` | `30m` | Default timeout per spec |
+| `--junit-dir` | | JUnit XML output directory |
+| `--no-cache` | `false` | Force re-planning |
+| `--dry-run` | `false` | Plan only, no execution |
+| `--fixtures-dir` | `fixtures` | Override fixtures directory |
+| `--context` | | Extra LLM context |
+| `--skip-cleanup` | `false` | Skip cleanup phases |
+| `--skip-phases` | | Phases to skip |
+| `--only-phases` | | Run only these phases |
+| `--project` | | Explicit project selection |
+| `--tcms` | `false` | Report to Kiwi TCMS |
+| `--tcms-product` | | TCMS product name |
+| `--tcms-build` | `unspecified` | TCMS build name |
+| `--tcms-run-id` | | Existing TCMS run ID |
+| `--tcms-plan-id` | | TCMS plan ID (filters specs) |

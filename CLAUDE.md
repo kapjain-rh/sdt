@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is SDT?
 
-SDT (Spec-Driven Testing) is a product-agnostic, AI-powered test framework. Tests are written as Markdown specs in natural language. An LLM agent reads each spec, plans execution steps, and runs them autonomously against a target system via MCP tools. The framework is extensible — project-specific tools, constraints, and prompts are registered by project packages (e.g., `projects/openshift/` for OpenShift testing).
+SDT (Spec-Driven Testing) is a product-agnostic, AI-powered test framework. Tests are written as Markdown specs in natural language. An LLM agent reads each spec, plans execution steps, and runs them autonomously against a target system via MCP tools. Project-specific tools are provided externally via MCP servers or YAML tool definitions — no compiled-in projects.
 
 ## Build and Development Commands
 
@@ -67,39 +67,34 @@ Framework-level tool infrastructure. Each tool has a `ToolHandler` function, a J
 
 **Constraints** (`constraints.go`): Centralized `ToolConstraints` system with `Check()`, `CheckShell()`, `BlockShellCommand()`, `RedirectTool()` helpers. Framework ships generic constraints (block filesystem root search, block sleep loops). Projects add their own via `AddConstraint()`.
 
-### Project System (`pkg/project/`, `pkg/config/`)
-
-Projects are pluggable integrations that register tools, constraints, and prompts for a specific target system. The `Project` interface (`pkg/project/project.go`) defines: `Name()`, `Description()`, `Setup(registry, constraints)`, `PromptFragment()`, `SystemDescription()`, `Detect()`.
-
-Projects self-register via `init()` using `project.Register()` (same pattern as `database/sql` drivers). The CLI selects the active project via:
-1. `--project` flag (highest priority)
-2. `.sdt.yaml` config file (`project:` field)
-3. Auto-detection (checks which project's prerequisites are available)
-
-Run `sdt projects` to list available projects and their detection status.
+### Configuration (`pkg/config/`)
 
 **Config file** (`.sdt.yaml` in working directory, optional):
 ```yaml
-project: openshift
-specsDir: specs/
-fixturesDir: fixtures/
+project: myapp
+description: "My application"
+context: |
+  Use dedicated tools instead of shell commands where available.
+specsDir: sdt/specs
+fixturesDir: sdt/fixtures
+toolsDir: sdt/tools
+mcpServers:
+  openshift:
+    command: ./openshift-mcp-server
+    env:
+      KUBECONFIG: /path/to/kubeconfig
 ```
 
-### Project Tools (`projects/`)
+`description` and `context` are passed to the LLM as `SystemDescription` and `ProjectContext` respectively. Tools come from two external sources: MCP servers (configured in `mcpServers`) and YAML tool definitions (in `toolsDir`).
 
-Project-specific tools live in separate packages under `projects/`. Each project implements `project.Project` and registers via `init()`.
+### Adding Project Tools
 
-**OpenShift** (`projects/openshift/`):
-- `project.go`: `OpenShiftProject` implementing `project.Project`, auto-registers via `init()`
-- `tools.go`: `OCClient`, `oc_run`, `oc_apply`, `oc_delete`, `oc_get`, `oc_patch`, `oc_exec`, `oc_logs`, `create_namespace`, `delete_namespace`, `wait_for_condition`, `wait_for_pods_ready`, `deploy_operator`, `process_template`, `query_metric`
-- `constraints.go`: `AddOpenShiftConstraints()` — blocks shell usage of oc subcommands, redirects oc_run wait to wait_for_condition
-- `prompts.go`: `PromptFragment` — OpenShift-specific LLM guidance
+All project-specific tools are external — no compiled-in projects:
 
-**Adding a new project** — two paths:
+1. **YAML tool definitions** — simple command-based tools in `sdt/tools/*.yaml`, managed via `sdt tools add/test/approve/list`
+2. **MCP servers** — full-featured tool servers in any language, configured in `.sdt.yaml` under `mcpServers`
 
-1. **External (MCP-based):** Run `sdt setup <name>` from any project directory. Define tools as MCP servers (any language), configure in `.sdt.yaml` under `mcpServers`. No Go code or SDT recompilation needed.
-
-2. **Compiled-in (Go-based):** Run `sdt init <name>` from the SDT source tree to scaffold Go code under `projects/<name>/`, then add a blank import in `cmd/sdt/run.go`. Use this when you need complex tool logic tightly integrated with SDT.
+See `examples/openshift-mcp-server/` for a complete Go-based MCP server with 14 OpenShift tools. See `examples/openshift/` for sample specs and fixtures.
 
 ### MCP Client (`pkg/mcp/client.go`, `pkg/mcp/bridge.go`)
 
@@ -136,10 +131,6 @@ Orchestrates the full lifecycle. `RunSuite` iterates test specs; `RunSpec` wires
 ### Fixtures (`pkg/fixture/`, `fixtures/`)
 
 YAML definitions with `name`, `template`, `parameters`, and `lifecycle` (create/ready/cleanup as natural language). The LLM interprets lifecycle instructions to generate tool calls. Specs reference fixtures by name in metadata.
-
-### Templates (`templates/`)
-
-Parameterized Kubernetes/OpenShift YAML templates processed via `oc process` or Go `text/template`. Organized by component (netobserv, kafka, loki, operators, etc.).
 
 ### Cache (`pkg/cache/`, `.sdt/cache/`)
 

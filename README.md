@@ -447,16 +447,30 @@ description: "My application"     # System description for LLM context
 specsDir: sdt/specs               # Test spec directory
 fixturesDir: sdt/fixtures         # Fixture definitions
 toolsDir: sdt/tools               # Custom tool definitions (YAML)
+shellTimeout: 120s                # Shell command timeout (default: 60s)
 
 # Extra context appended to LLM system prompts
 context: |
   Use dedicated tools instead of shell commands where available.
+
+# Global constraints — block shell commands that have dedicated tools
+constraints:
+  - block_shell: "curl"
+    redirect: check_health
 
 mcpServers:                       # MCP tool servers
   openshift:
     command: ./openshift-mcp-server
     env:
       KUBECONFIG: /path/to/kubeconfig
+    constraints:                  # Per-server constraints
+      - block_shell: "oc get"
+        redirect: oc_get
+      - block_shell: "oc apply"
+        redirect: oc_apply
+      - block_tool: oc_run        # Redirect within MCP tools
+        match: wait
+        redirect: wait_for_condition
 ```
 
 ### CLI flags

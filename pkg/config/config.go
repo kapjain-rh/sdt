@@ -10,21 +10,32 @@ import (
 
 // Config represents the contents of an .sdt.yaml configuration file.
 type Config struct {
-	Project     string                       `yaml:"project"`
-	Description string                       `yaml:"description,omitempty"`
-	Context     string                       `yaml:"context,omitempty"`
-	SpecsDir    string                       `yaml:"specsDir,omitempty"`
-	FixturesDir string                       `yaml:"fixturesDir,omitempty"`
-	ToolsDir    string                       `yaml:"toolsDir,omitempty"`
-	MCPServers  map[string]MCPServerConfig   `yaml:"mcpServers,omitempty"`
-	Extra       map[string]interface{}       `yaml:"extra,omitempty"`
+	Project      string                       `yaml:"project"`
+	Description  string                       `yaml:"description,omitempty"`
+	Context      string                       `yaml:"context,omitempty"`
+	SpecsDir     string                       `yaml:"specsDir,omitempty"`
+	FixturesDir  string                       `yaml:"fixturesDir,omitempty"`
+	ToolsDir     string                       `yaml:"toolsDir,omitempty"`
+	MCPServers   map[string]MCPServerConfig   `yaml:"mcpServers,omitempty"`
+	Constraints  []ConstraintConfig           `yaml:"constraints,omitempty"`
+	ShellTimeout string                       `yaml:"shellTimeout,omitempty"`
+	Extra        map[string]interface{}       `yaml:"extra,omitempty"`
 }
 
 // MCPServerConfig describes how to launch an MCP server process.
 type MCPServerConfig struct {
-	Command string            `yaml:"command"`
-	Args    []string          `yaml:"args,omitempty"`
-	Env     map[string]string `yaml:"env,omitempty"`
+	Command     string             `yaml:"command"`
+	Args        []string           `yaml:"args,omitempty"`
+	Env         map[string]string  `yaml:"env,omitempty"`
+	Constraints []ConstraintConfig `yaml:"constraints,omitempty"`
+}
+
+// ConstraintConfig defines a tool constraint in .sdt.yaml.
+type ConstraintConfig struct {
+	BlockShell string `yaml:"block_shell,omitempty"`
+	Redirect   string `yaml:"redirect,omitempty"`
+	BlockTool  string `yaml:"block_tool,omitempty"`
+	Match      string `yaml:"match,omitempty"`
 }
 
 var defaultConfigFiles = []string{".sdt.yaml", ".sdt.yml"}

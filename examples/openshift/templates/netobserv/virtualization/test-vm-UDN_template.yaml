@@ -48,7 +48,7 @@ objects:
               userData: |-
                 #cloud-config
                 user: cloud-user
-                password: byje-7cd2-i8et
+                password: byje-7cd2-i8et # notsecret
                 chpasswd: { expire: False }
                 runcmd: ${RUN_CMD}
             name: cloudinitdisk

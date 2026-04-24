@@ -1,0 +1,7 @@
+[allowlist]
+  description = "Global Allowlist"
+
+  regexes = [
+    # Ephemeral cloud-init password used in test VM templates
+    '''byje-7cd2-i8et''',
+  ]

@@ -23,3 +23,10 @@ sdt
 # OS
 .DS_Store
 Thumbs.db
+
+# UI (Next.js)
+ui/node_modules/
+ui/.next/
+ui/out/
+ui/next-env.d.ts
+ui/tsconfig.tsbuildinfo

@@ -78,7 +78,41 @@ func ParseTestSpec(filePath string) (*TestSpec, error) {
 		}
 	}
 
+	// Resolve base spec inheritance
+	if spec.Metadata.BaseSpec != "" {
+		basePath := spec.Metadata.BaseSpec
+		// Resolve relative to the spec's directory
+		if !strings.HasPrefix(basePath, "/") {
+			dir := filePath[:strings.LastIndex(filePath, "/")+1]
+			basePath = dir + basePath
+		}
+		base, err := ParseTestSpec(basePath)
+		if err != nil {
+			return nil, fmt.Errorf("loading base spec %s: %w", basePath, err)
+		}
+		spec.inheritFrom(base)
+	}
+
 	return spec, nil
+}
+
+// inheritFrom merges sections from a base spec where the child spec has no content.
+func (s *TestSpec) inheritFrom(base *TestSpec) {
+	if len(s.Setup) == 0 {
+		s.Setup = base.Setup
+	}
+	if len(s.Cleanup) == 0 {
+		s.Cleanup = base.Cleanup
+	}
+	if s.Metadata.Group == "" && base.Metadata.Group != "" {
+		s.Metadata.Group = base.Metadata.Group
+	}
+	if len(s.Metadata.Fixtures) == 0 && len(base.Metadata.Fixtures) > 0 {
+		s.Metadata.Fixtures = base.Metadata.Fixtures
+	}
+	if s.Metadata.Timeout == 0 && base.Metadata.Timeout > 0 {
+		s.Metadata.Timeout = base.Metadata.Timeout
+	}
 }
 
 // ParseSuiteSpec parses a _suite.md file into a SuiteSpec.
@@ -260,6 +294,10 @@ func parseMetadataLine(line string, m *Metadata) {
 		m.Fixtures = parseList(value)
 	case "status":
 		m.Status = strings.ToLower(value)
+	case "dependson", "depends_on", "depends-on":
+		m.DependsOn = parseList(value)
+	case "basespec", "base_spec", "base-spec", "base", "extends":
+		m.BaseSpec = value
 	}
 }
 

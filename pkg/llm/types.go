@@ -55,6 +55,7 @@ type Request struct {
 	Temperature       *float64         `json:"temperature,omitempty"`
 	Thinking          *ThinkingConfig  `json:"thinking,omitempty"`
 	AnthropicVersion  string           `json:"anthropic_version,omitempty"` // Required for Vertex AI (set in body instead of header)
+	MaxIterations     int              `json:"-"`                           // Max agent loop iterations (0 = default)
 }
 
 // vertexRequest is the Vertex AI variant that omits the model field from JSON

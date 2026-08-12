@@ -139,6 +139,18 @@ func (r *Registry) LLMToolDefinitions() []struct {
 	return result
 }
 
+// Clone creates a shallow copy of the registry with the same tools.
+// Changes to the clone do not affect the original.
+func (r *Registry) Clone() *Registry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	clone := &Registry{tools: make(map[string]*Tool, len(r.tools))}
+	for k, v := range r.tools {
+		clone.tools[k] = v
+	}
+	return clone
+}
+
 // HandleToolCall creates a tool handler function for use with the LLM agent loop.
 // It dispatches tool calls to the appropriate registered handler.
 func (r *Registry) HandleToolCall(ctx context.Context) func(name string, input json.RawMessage) (string, error) {

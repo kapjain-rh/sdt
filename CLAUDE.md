@@ -10,6 +10,8 @@ SDT (Spec-Driven Testing) is a product-agnostic, AI-powered test framework. Test
 
 ```bash
 make build          # Build binary to bin/sdt
+make build-ui       # Build frontend static export into pkg/api/ui/dist/ (requires Node.js 18+)
+make build-all      # Build frontend + Go binary with embedded UI
 make install        # Install to $GOPATH/bin
 make test           # Run all tests (verbose, no caching)
 make test-short     # Run tests in short mode
@@ -24,6 +26,17 @@ go test ./pkg/cache/... -v -count=1 -run TestStorePlanCaching
 ```
 
 The binary version is injected via `-ldflags "-X main.version=..."` from `git describe`.
+
+### UI Development
+
+The web UI is a Next.js app in `ui/`. For frontend development, run the API and frontend dev server separately:
+
+```bash
+sdt serve --project-dir /path/to/project --port 8090   # API server
+cd ui && npm install && npm run dev                     # Frontend on :3000, proxies API to :8090
+```
+
+Set `SDT_API_PORT` to use a different backend port. The AGENTS.md in `ui/` warns that this Next.js version has breaking API changes — always read `node_modules/next/dist/docs/` before writing frontend code.
 
 ## Environment Variables
 
@@ -55,15 +68,17 @@ Uses a `Provider` interface to support multiple LLM backends. `Client` wraps the
 - **Claude** (`claude.go`) — Anthropic Messages API (direct or Vertex AI)
 - **Gemini** (`gemini.go`) — Google Gemini via Vertex AI `generateContent` endpoint
 
-The key method is `RunAgentLoop` — a multi-turn loop that sends messages, executes tool calls via a handler function, sends results back, and repeats until `end_turn`. Provider selection is via `SDT_PROVIDER` env var.
+The key method is `RunAgentLoop` — a multi-turn loop that sends messages, executes tool calls via a handler function, sends results back, and repeats until `end_turn` (max 50 iterations, 5 consecutive error limit). Provider selection is via `SDT_PROVIDER` env var; `NewClient()` auto-detects from env vars unless a provider is injected via `WithProvider()`.
 
 ### Tool Registry (`pkg/tools/`)
 
 Framework-level tool infrastructure. Each tool has a `ToolHandler` function, a JSON schema for input, and returns `*ToolResult`. The `Tool` struct includes `PromptHint` and `Category` fields for prompt generation.
 
-**Core tools** (registered via `RegisterCoreTools()`):
+**Core tools** (registered via `RegisterCoreTools()` in `toolset.go`):
 - **Shell tools** (`shell.go`): `shell`, `read_file`, `write_file`
 - **Runtime tools** (`runtime.go`): `python`, `node`, `npm`, `npx`, `go_run`, `cypress`, `check_runtimes`
+
+**Custom YAML tools** (`custom.go`): `LoadCustomTools()` reads YAML tool definitions from a directory (e.g., `sdt/tools/*.yaml`). Each `CustomToolDef` has a Go template `Command` field, a `Status` (draft/approved), and typed `Input` parameters. Only approved tools are loaded during `sdt run`.
 
 **Constraints** (`constraints.go`): Centralized `ToolConstraints` system with `Check()`, `CheckShell()`, `BlockShellCommand()`, `RedirectTool()` helpers. Framework ships generic constraints (block filesystem root search, block sleep loops). Projects add their own via `AddConstraint()`.
 
@@ -87,30 +102,11 @@ mcpServers:
 
 `description` and `context` are passed to the LLM as `SystemDescription` and `ProjectContext` respectively. Tools come from two external sources: MCP servers (configured in `mcpServers`) and YAML tool definitions (in `toolsDir`).
 
-### Adding Project Tools
-
-All project-specific tools are external — no compiled-in projects:
-
-1. **YAML tool definitions** — simple command-based tools in `sdt/tools/*.yaml`, managed via `sdt tools add/test/approve/list`
-2. **MCP servers** — full-featured tool servers in any language, configured in `.sdt.yaml` under `mcpServers`
-
-See `examples/openshift-mcp-server/` for a complete Go-based MCP server with 14 OpenShift tools. See `examples/openshift/` for sample specs and fixtures.
-
 ### MCP Client (`pkg/mcp/client.go`, `pkg/mcp/bridge.go`)
 
-SDT acts as an MCP client, connecting to external MCP servers defined in `.sdt.yaml`. On startup, it spawns each server subprocess, performs the JSON-RPC 2.0 handshake (`initialize`), discovers tools via `tools/list`, and registers them into the tool registry. Tool calls are proxied to the server via `tools/call`.
+SDT acts as an MCP client, connecting to external MCP servers defined in `.sdt.yaml`. On startup, it spawns each server subprocess, performs the JSON-RPC 2.0 handshake (`initialize`), discovers tools via `tools/list`, and registers them into the tool registry via `RegisterMCPTools()` in `bridge.go`. Tool calls are proxied to the server via `tools/call`.
 
-MCP servers can be written in any language (Go, Python, TypeScript, bash) using the standard MCP protocol over stdio. This is the primary mechanism for adding project-specific tools without modifying SDT source.
-
-Config example:
-```yaml
-mcpServers:
-  myapp:
-    command: python
-    args: [-m, myapp_mcp_server]
-    env:
-      API_URL: http://localhost:8080
-```
+MCP servers can be written in any language (Go, Python, TypeScript, bash) using the standard MCP protocol over stdio. This is the primary mechanism for adding project-specific tools without modifying SDT source. See `examples/openshift-mcp-server/` for a complete Go-based MCP server.
 
 ### Spec System (`pkg/spec/`)
 
@@ -126,15 +122,29 @@ Execution order: Suite Pre-Suite → Pre-Suite Validation → (Suite Pre-Test �
 
 ### Runner (`pkg/runner/runner.go`)
 
-Orchestrates the full lifecycle. `RunSuite` iterates test specs; `RunSpec` wires up agents, resolves fixtures, runs planning/execution, and collects results. Hook phases are also executed through the LLM agent loop. Configurable via `Config` struct: `SystemDescription` (e.g., "OpenShift cluster"), `ProjectContext` (prompt fragment), `Constraints`, `SkipPhases`/`OnlyPhases` for phase filtering.
+Orchestrates the full lifecycle. `RunSuite` iterates test specs (supports parallel execution); `RunSpec` wires up agents, resolves fixtures, runs planning/execution, and collects results. Hook phases are also executed through the LLM agent loop. Configurable via `Config` struct: `SystemDescription` (e.g., "OpenShift cluster"), `ProjectContext` (prompt fragment), `Constraints`, `SkipPhases`/`OnlyPhases` for phase filtering, `Parallel` for concurrent spec execution, `Retries` for automatic retry on failure.
 
-### Fixtures (`pkg/fixture/`, `fixtures/`)
+### API Server (`pkg/api/`)
+
+HTTP server (`sdt serve`) providing a REST API and optional embedded web UI. `Server` in `server.go` wires together:
+- `ProjectStore` (`store.go`) — reads specs, fixtures, tools, cache from the project directory
+- `ToolExecutor` (`tool_executor.go`) — tests tools with sample input
+- `SpecExecutor` (`spec_executor.go`) — runs specs via the agent pipeline
+- `MCPManager` (`mcpmanager.go`) — manages MCP server connections for the API
+
+The `--ui` flag serves the bundled Next.js static export from `pkg/api/ui/dist/` (embedded via `go:embed` in `ui.go`).
+
+### Fixtures (`pkg/fixture/`)
 
 YAML definitions with `name`, `template`, `parameters`, and `lifecycle` (create/ready/cleanup as natural language). The LLM interprets lifecycle instructions to generate tool calls. Specs reference fixtures by name in metadata.
 
 ### Cache (`pkg/cache/`, `.sdt/cache/`)
 
 Plans are cached by spec content hash. Results are stored per-spec with timestamps. Cache lives in `.sdt/cache/` (gitignored).
+
+### Template System (`pkg/template/`)
+
+`TemplateDef` structs for reusable resource templates with typed parameters. Used by the Coding Agent to generate YAML from natural language descriptions. `processor.go` handles template rendering; `registry.go` manages template discovery and lookup.
 
 ### Reporters (`pkg/reporter/`)
 
@@ -143,3 +153,15 @@ Plans are cached by spec content hash. Results are stored per-spec with timestam
 ### TCMS Integration (`pkg/tcms/`)
 
 JSON-RPC client for Kiwi TCMS. Syncs specs as test cases, creates test plans/runs, and reports execution results. Accessed via `sdt tcms sync|status|import` commands.
+
+### CLI Structure (`cmd/sdt/`)
+
+Cobra-based CLI. Each subcommand lives in its own file. Notable commands beyond `run`:
+- `serve` — HTTP API server with optional embedded UI
+- `watch` — polls spec files and re-validates on save (useful during authoring)
+- `diff` — shows the cached execution plan for a spec
+- `doctor` — pre-flight checks for LLM credentials, MCP servers, tools, and config
+- `specs` — lifecycle management (add, run with section control, approve, list)
+- `suite` — suite management (add, run, list)
+- `fixtures` — fixture lifecycle (add, validate, approve, list)
+- `tools` — tool lifecycle (add, test, approve, list)

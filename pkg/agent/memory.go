@@ -1,11 +1,8 @@
 package agent
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/sdt-project/sdt/pkg/cache"
 	"github.com/sdt-project/sdt/pkg/spec"
@@ -71,30 +68,12 @@ func (m *MemoryAgent) InvalidateCache(spec *spec.TestSpec) error {
 	return nil
 }
 
-// ComputeSpecHash computes a hash of the spec file content for caching.
-// This ensures that if the spec file is modified, the cache is invalidated.
-func (m *MemoryAgent) ComputeSpecHash(spec *spec.TestSpec) string {
-	// Try to read the spec file and hash its content
-	if content, err := os.ReadFile(spec.FilePath); err == nil {
-		hash := sha256.Sum256(content)
-		return hex.EncodeToString(hash[:])
-	}
-
-	// Fallback: hash the spec struct fields
-	hashInput := fmt.Sprintf("%s|%s|%s|%s|%s|%d|%d|%d|%d",
-		spec.Name,
-		spec.FilePath,
-		spec.Metadata.Author,
-		spec.Metadata.Priority,
-		spec.Metadata.CaseID,
-		len(spec.Setup),
-		len(spec.Steps),
-		len(spec.Verify),
-		len(spec.Cleanup),
-	)
-
-	hash := sha256.Sum256([]byte(hashInput))
-	return hex.EncodeToString(hash[:])
+// ComputeSpecHash computes a SHA256 hash of the spec file content for caching.
+func (m *MemoryAgent) ComputeSpecHash(s *spec.TestSpec) string {
+	return cache.ComputeSpecHashFromFile(s.FilePath,
+		s.Name, s.FilePath, s.Metadata.Author, s.Metadata.Priority,
+		s.Metadata.CaseID, fmt.Sprintf("%d|%d|%d|%d",
+			len(s.Setup), len(s.Steps), len(s.Verify), len(s.Cleanup)))
 }
 
 // GetLatestResult retrieves the most recent result for a spec.

@@ -133,15 +133,14 @@ func (p *PlannerAgent) systemPrompt() string {
 // Otherwise, it generates a new plan via LLM and saves it to cache.
 // The extraContext parameter provides additional instructions or environment details
 // that the LLM should consider when planning (e.g., cluster-specific conditions).
-func (p *PlannerAgent) Plan(ctx context.Context, testSpec *spec.TestSpec, suiteSpec *spec.SuiteSpec, groupSpec *spec.GroupSpec, fixtures []*fixture.Definition, extraContext string) (*ExecutionPlan, error) {
-	// Compute spec hash for caching
-	specHash := computeSpecHash(testSpec)
-
-	// Check cache first
-	if cached, ok := p.store.GetPlan(specHash); ok {
-		var plan ExecutionPlan
-		if err := json.Unmarshal(cached, &plan); err == nil {
-			return &plan, nil
+func (p *PlannerAgent) Plan(ctx context.Context, specHash string, testSpec *spec.TestSpec, suiteSpec *spec.SuiteSpec, groupSpec *spec.GroupSpec, fixtures []*fixture.Definition, extraContext string) (*ExecutionPlan, error) {
+	// Check cache first (skip if no hash provided, e.g. --no-cache mode)
+	if specHash != "" {
+		if cached, ok := p.store.GetPlan(specHash); ok {
+			var plan ExecutionPlan
+			if err := json.Unmarshal(cached, &plan); err == nil {
+				return &plan, nil
+			}
 		}
 	}
 
@@ -155,8 +154,10 @@ func (p *PlannerAgent) Plan(ctx context.Context, testSpec *spec.TestSpec, suiteS
 	plan.Model = p.llmClient.Model()
 
 	// Save to cache
-	if planBytes, err := json.Marshal(plan); err == nil {
-		p.store.SavePlan(specHash, planBytes)
+	if specHash != "" {
+		if planBytes, err := json.Marshal(plan); err == nil {
+			p.store.SavePlan(specHash, planBytes)
+		}
 	}
 
 	return plan, nil
@@ -165,7 +166,11 @@ func (p *PlannerAgent) Plan(ctx context.Context, testSpec *spec.TestSpec, suiteS
 // PlanHooks generates an execution plan for hook steps (pre-suite, pre-test, etc.),
 // using cache when available. This ensures hooks produce consistent plans across runs.
 func (p *PlannerAgent) PlanHooks(ctx context.Context, phaseName string, steps []spec.StepDef, extraContext string) (*ExecutionPlan, error) {
-	specHash := computeHookHash(phaseName, steps)
+	stepTexts := make([]string, len(steps))
+	for i, s := range steps {
+		stepTexts[i] = s.RawText
+	}
+	specHash := cache.ComputeHookHash(phaseName, stepTexts)
 
 	// Check cache first
 	if p.store != nil {
@@ -234,19 +239,6 @@ func (p *PlannerAgent) PlanHooks(ctx context.Context, phaseName string, steps []
 	}
 
 	return &plan, nil
-}
-
-// computeHookHash computes a hash of hook steps for caching.
-func computeHookHash(phaseName string, steps []spec.StepDef) string {
-	content := phaseName
-	for _, s := range steps {
-		content += "|" + s.RawText
-	}
-	hash := 0
-	for _, c := range content {
-		hash = ((hash << 5) - hash) + int(c)
-	}
-	return fmt.Sprintf("hook-%x", hash)
 }
 
 // generatePlan uses the LLM to create a plan from the spec.
@@ -390,17 +382,12 @@ Setup Steps:
 	return prompt
 }
 
-// computeSpecHash computes a hash of the spec for caching purposes.
-func computeSpecHash(spec *spec.TestSpec) string {
-	content := fmt.Sprintf("%s|%s|%s|%s|%s|%d|%d|%d|%d",
-		spec.Name, spec.FilePath, spec.Metadata.Author, spec.Metadata.Priority,
-		spec.Metadata.CaseID, len(spec.Setup), len(spec.Steps), len(spec.Verify), len(spec.Cleanup))
-	// Simple hash for now - in production would use crypto hash
-	hash := 0
-	for _, c := range content {
-		hash = ((hash << 5) - hash) + int(c)
-	}
-	return fmt.Sprintf("%x", hash)
+// ComputeSpecHash computes a SHA256 hash of the spec file content for caching.
+func ComputeSpecHash(ts *spec.TestSpec) string {
+	return cache.ComputeSpecHashFromFile(ts.FilePath,
+		ts.Name, ts.FilePath, ts.Metadata.Author, ts.Metadata.Priority,
+		ts.Metadata.CaseID, fmt.Sprintf("%d|%d|%d|%d",
+			len(ts.Setup), len(ts.Steps), len(ts.Verify), len(ts.Cleanup)))
 }
 
 // jsonStartIndex finds the start of a JSON object or array in a string.

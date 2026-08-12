@@ -67,7 +67,7 @@ func NewClaudeProvider(model string, maxTokens int) (*ClaudeProvider, error) {
 			}
 
 			p.httpClient = &http.Client{
-				Timeout:   5 * time.Minute,
+				Timeout:   10 * time.Minute,
 				Transport: &oauth2Transport{creds: creds},
 			}
 
@@ -126,19 +126,53 @@ func (p *ClaudeProvider) SendMessage(ctx context.Context, req *Request) (*Respon
 		httpReq.Header.Set("anthropic-version", claudeAPIVersion)
 	}
 
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("sending request: %w", err)
-	}
-	defer resp.Body.Close()
+	var resp *http.Response
+	var respBody []byte
+	maxRetries := 3
+	for attempt := range maxRetries {
+		if attempt > 0 {
+			httpReq, err = http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(body))
+			if err != nil {
+				return nil, fmt.Errorf("creating HTTP request: %w", err)
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+			if !p.useVertex {
+				httpReq.Header.Set("x-api-key", p.apiKey)
+				httpReq.Header.Set("anthropic-version", claudeAPIVersion)
+			}
+		}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
+		resp, err = p.httpClient.Do(httpReq)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("sending request: %w", err)
+			}
+			log.Warnf("LLM", "Request failed (attempt %d/%d): %v", attempt+1, maxRetries, err)
+			time.Sleep(time.Duration(attempt+1) * 10 * time.Second)
+			continue
+		}
 
-	if resp.StatusCode != http.StatusOK {
+		respBody, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("reading response body: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			break
+		}
+		if resp.StatusCode == 429 || resp.StatusCode == 529 || resp.StatusCode >= 500 {
+			log.Warnf("LLM", "API returned %d (attempt %d/%d): %s", resp.StatusCode, attempt+1, maxRetries, string(respBody))
+			time.Sleep(time.Duration(attempt+1) * 10 * time.Second)
+			continue
+		}
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sending request after %d retries: %w", maxRetries, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API error (status %d) after %d retries: %s", resp.StatusCode, maxRetries, string(respBody))
 	}
 
 	var apiResp Response

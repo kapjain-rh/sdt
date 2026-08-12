@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -111,8 +112,48 @@ func (e *ExecutorAgent) Execute(ctx context.Context, plan *ExecutionPlan, extraC
 		}
 	}
 
+	// Clone registry and add execution-scoped tools
+	execRegistry := e.registry.Clone()
+	execRegistry.Register(&tools.Tool{
+		Name:        "report_step_result",
+		Description: "Report the result of a test step. You MUST call this after completing each step. FAIL stops execution immediately.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"step_description": {"type": "string", "description": "Brief description of the step that was executed"},
+				"status": {"type": "string", "enum": ["PASS", "FAIL", "SKIP"], "description": "The outcome of the step"},
+				"error_message": {"type": "string", "description": "Error details when status is FAIL"}
+			},
+			"required": ["step_description", "status"]
+		}`),
+		Handler: func(ctx context.Context, input json.RawMessage) (*tools.ToolResult, error) {
+			var params struct {
+				StepDescription string `json:"step_description"`
+				Status          string `json:"status"`
+				ErrorMessage    string `json:"error_message"`
+			}
+			if err := json.Unmarshal(input, &params); err != nil {
+				return nil, fmt.Errorf("parsing report_step_result: %w", err)
+			}
+			log.Infof("EXEC", "Step result: %s — %s", params.StepDescription, params.Status)
+			switch params.Status {
+			case "FAIL":
+				errMsg := params.ErrorMessage
+				if errMsg == "" {
+					errMsg = "step failed"
+				}
+				return nil, fmt.Errorf("step failed: %s: %s: %w", params.StepDescription, errMsg, llm.ErrStopExecution)
+			case "SKIP":
+				return &tools.ToolResult{Output: fmt.Sprintf("Step skipped: %s", params.StepDescription)}, nil
+			default:
+				return &tools.ToolResult{Output: fmt.Sprintf("Step passed: %s", params.StepDescription)}, nil
+			}
+		},
+		Category: "framework",
+	})
+
 	// Set up the agent loop request
-	toolDefs := e.registry.LLMToolDefinitions()
+	toolDefs := execRegistry.LLMToolDefinitions()
 	var llmTools []llm.ToolDefinition
 	for _, td := range toolDefs {
 		llmTools = append(llmTools, llm.ToolDefinition{
@@ -121,7 +162,7 @@ func (e *ExecutorAgent) Execute(ctx context.Context, plan *ExecutionPlan, extraC
 			InputSchema: td.InputSchema,
 		})
 	}
-	log.Debugf("EXEC", "Registered %d tools for agent loop", len(llmTools))
+	log.Debugf("EXEC", "Registered %d tools for agent loop (includes report_step_result)", len(llmTools))
 
 	prompt := buildExecutorPrompt(plan)
 	if extraContext != "" {
@@ -144,58 +185,91 @@ func (e *ExecutorAgent) Execute(ctx context.Context, plan *ExecutionPlan, extraC
 		Tools: llmTools,
 	}
 
-	log.Infof("EXEC", "Launching LLM agent loop for %q (stopOnError=%v)", plan.SpecName, stopOnError)
-	toolHandler := e.registry.HandleToolCall(ctx)
-	finalResp, toolLogs, err := e.llmClient.RunAgentLoop(ctx, req, toolHandler, stopOnError)
-	if err != nil {
-		result.Status = "FAILED"
-		result.Error = fmt.Sprintf("agent loop error: %v", err)
-		log.Errorf("EXEC", "Execution FAILED for %q: %v", plan.SpecName, err)
-		return result, err
-	}
+	// Use stopOnError=false so tool errors go back to the LLM for interpretation.
+	// The LLM decides PASS/FAIL/SKIP via report_step_result. Only report_step_result(FAIL)
+	// stops the loop (via ErrStopExecution).
+	log.Infof("EXEC", "Launching LLM agent loop for %q", plan.SpecName)
+	toolHandler := execRegistry.HandleToolCall(ctx)
+	finalResp, toolLogs, loopErr := e.llmClient.RunAgentLoop(ctx, req, toolHandler, false)
 
-	// Store tool call logs
+	// Always process tool logs — they contain the steps that ran before any failure
 	result.ToolCalls = toolLogs
 
-	// Parse the final response to extract execution results
-	// For now, we create a simple result based on tool call success
 	phaseResult := PhaseResult{
 		Phase:       "execution",
 		Status:      "PASSED",
 		StepResults: make([]StepResult, 0),
 	}
 
-	passed, failed := 0, 0
-	for _, log := range toolLogs {
+	passed, failed, skipped := 0, 0, 0
+	for _, tl := range toolLogs {
+		// report_step_result calls are step-level verdicts, not tool executions
+		if tl.ToolName == "report_step_result" {
+			var params struct {
+				StepDescription string `json:"step_description"`
+				Status          string `json:"status"`
+				ErrorMessage    string `json:"error_message"`
+			}
+			_ = json.Unmarshal(tl.Input, &params)
+			stepResult := StepResult{
+				ToolName:    "report_step_result",
+				Description: params.StepDescription,
+				Duration:    tl.Duration,
+			}
+			switch params.Status {
+			case "FAIL":
+				stepResult.Status = "FAILED"
+				stepResult.Error = params.ErrorMessage
+				phaseResult.Status = "FAILED"
+				result.Status = "FAILED"
+				failed++
+			case "SKIP":
+				stepResult.Status = "SKIPPED"
+				skipped++
+			default:
+				stepResult.Status = "PASSED"
+				passed++
+			}
+			phaseResult.StepResults = append(phaseResult.StepResults, stepResult)
+			continue
+		}
+
+		// Skip raw tool calls — they're intermediate; report_step_result is the verdict
+		if len(phaseResult.StepResults) > 0 || tl.Error == "" {
+			continue
+		}
+		// If we have a tool error with no report_step_result yet, record it
 		stepResult := StepResult{
-			ToolName:    log.ToolName,
-			Output:      log.Output,
-			Duration:    log.Duration,
+			ToolName:    tl.ToolName,
+			Description: tl.ToolName,
+			Output:      tl.Output,
+			Duration:    tl.Duration,
+			Status:      "FAILED",
+			Error:       tl.Error,
 		}
-
-		if log.Error != "" {
-			stepResult.Status = "FAILED"
-			stepResult.Error = log.Error
-			phaseResult.Status = "FAILED"
-			result.Status = "FAILED"
-			failed++
-		} else {
-			stepResult.Status = "PASSED"
-			passed++
-		}
-
+		phaseResult.Status = "FAILED"
+		result.Status = "FAILED"
+		failed++
 		phaseResult.StepResults = append(phaseResult.StepResults, stepResult)
 	}
 
 	result.PhaseResults = append(result.PhaseResults, phaseResult)
 
-	// If there was reasoning in the response, include it (extended thinking)
-	thinking := finalResp.ThinkingContent()
-	if thinking != "" {
-		result.ToolCalls = append(result.ToolCalls, llm.ToolCallLog{
-			ToolName: "reasoning",
-			Output:   thinking,
-		})
+	if loopErr != nil {
+		result.Status = "FAILED"
+		result.Error = fmt.Sprintf("agent loop error: %v", loopErr)
+		log.Errorf("EXEC", "Execution FAILED for %q: %v", plan.SpecName, loopErr)
+		return result, loopErr
+	}
+
+	if finalResp != nil {
+		thinking := finalResp.ThinkingContent()
+		if thinking != "" {
+			result.ToolCalls = append(result.ToolCalls, llm.ToolCallLog{
+				ToolName: "reasoning",
+				Output:   thinking,
+			})
+		}
 	}
 
 	result.CleanupRun = true
@@ -237,15 +311,17 @@ Phases:
 	prompt += `
 Execute each step in order. For each step:
 1. Call the specified tool with the given parameters
-2. Check that the output matches the expected result
-3. If validation passes, continue to the next step
-4. If validation fails and on_failure is "fail", stop and report error
-5. If on_failure is "retry", try again
-6. If on_failure is "skip", skip to the next step
+2. Analyze the output to determine if the step succeeded or failed
+3. Call report_step_result with the outcome:
+   - PASS if the step succeeded
+   - FAIL if the step failed and on_failure is "fail" (execution stops)
+   - SKIP if the step failed but on_failure is "skip" (execution continues)
+   - If on_failure is "retry", retry the step before reporting
 
-Always run cleanup steps at the end, even if earlier steps fail.
+IMPORTANT: You MUST call report_step_result after EVERY step. Never skip this call.
+When you report FAIL, execution stops immediately — do not call any more tools after that.
 
-Report tool calls and results as you progress.`
+Always run cleanup steps at the end, even if earlier steps fail.`
 
 	return prompt
 }

@@ -32,20 +32,28 @@ When using the shell tool:
 - Use relative paths from the working directory for templates and files
 - Do NOT use shell for polling loops with sleep — use a dedicated waiting tool
 
+CRITICAL — Step result reporting:
+After completing each step, you MUST call report_step_result with:
+- step_description: what was executed
+- status: PASS, FAIL, or SKIP
+- error_message: required when status is FAIL
+
+Failure handling by on_failure setting:
+- on_failure="fail" (default): report FAIL → execution stops immediately
+- on_failure="skip": report SKIP → execution continues to next step
+- on_failure="retry": retry the step, then report PASS or FAIL
+
 For each step in the plan:
 1. Call the specified tool with the given parameters
-2. Analyze the tool output to validate it matches expected results
-3. If validation passes, move to the next step
-4. If validation fails, follow the failure handling strategy
+2. Analyze the tool output to determine success or failure
+3. Call report_step_result with the outcome
+4. If FAIL is reported, do NOT call any more tools
 
 Always:
 - Execute steps in order (setup → test → verification → cleanup)
-- Capture all tool outputs for the report
+- Call report_step_result after EVERY step — never skip this
 - Run cleanup steps even if previous steps fail
-- Provide clear error messages when validations fail
-- Track the status of each step (PASSED, FAILED, SKIPPED)
-
-After each tool call, analyze the output and determine if the step succeeded.`
+- Provide clear error messages when reporting failures`
 
 // ReviewerSystemPrompt instructs the LLM to review specs and analyze failures.
 const ReviewerSystemPrompt = `You are a test review and analysis agent. Your task is to:

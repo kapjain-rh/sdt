@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/sdt-project/sdt/pkg/agent"
@@ -33,6 +35,8 @@ type Runner struct {
 	constraints       *tools.ToolConstraints
 	systemDescription string
 	promptContext     *agent.PromptContext
+	parallel          int
+	retries           int
 }
 
 // Config holds runner configuration.
@@ -52,6 +56,8 @@ type Config struct {
 	OnlyPhases        []string
 	SystemDescription string // e.g., "OpenShift cluster", "Kafka cluster", "web application"
 	ProjectContext    string // project-specific prompt fragment appended to system prompts
+	Parallel          int
+	Retries           int
 }
 
 // NewRunner creates a runner with the given configuration.
@@ -85,6 +91,11 @@ func NewRunner(cfg Config) *Runner {
 		}
 	}
 
+	parallel := cfg.Parallel
+	if parallel < 1 {
+		parallel = 1
+	}
+
 	return &Runner{
 		llmClient:         cfg.LLMClient,
 		toolRegistry:      cfg.ToolRegistry,
@@ -101,6 +112,8 @@ func NewRunner(cfg Config) *Runner {
 		constraints:       cfg.Constraints,
 		systemDescription: sysDesc,
 		promptContext:     pctx,
+		parallel:          parallel,
+		retries:           cfg.Retries,
 	}
 }
 
@@ -148,31 +161,10 @@ func (r *Runner) RunSuite(ctx context.Context, suite *spec.Suite) *reporter.Suit
 	}
 
 	// Execute each test spec
-	for _, testSpec := range suite.Tests {
-		if preSuiteFailed {
-			testReport := &reporter.TestReport{
-				Name:     testSpec.TestName(),
-				FilePath: testSpec.FilePath,
-				Status:   reporter.TestSkipped,
-				Error:    "skipped: pre-suite hook failed",
-			}
-			suiteReport.Tests = append(suiteReport.Tests, testReport)
-			suiteReport.Skipped++
-			r.reporter.StartSpec(testSpec.TestName())
-			r.reporter.EndSpec(testReport)
-			continue
-		}
-		testReport := r.RunSpec(ctx, testSpec, suite.SuiteSpec, suite.Groups)
-		suiteReport.Tests = append(suiteReport.Tests, testReport)
-
-		switch testReport.Status {
-		case reporter.TestPassed:
-			suiteReport.Passed++
-		case reporter.TestFailed:
-			suiteReport.Failed++
-		case reporter.TestSkipped:
-			suiteReport.Skipped++
-		}
+	if r.parallel > 1 && !preSuiteFailed {
+		r.runSpecsParallel(ctx, suite, suiteReport, preSuiteFailed)
+	} else {
+		r.runSpecsSequential(ctx, suite, suiteReport, preSuiteFailed)
 	}
 
 	// Phase: Post-Suite (once)
@@ -181,6 +173,22 @@ func (r *Runner) RunSuite(ctx context.Context, suite *spec.Suite) *reporter.Suit
 	}
 
 	suiteReport.Duration = time.Since(suiteStart)
+
+	// Populate token usage from LLM client
+	if r.llmClient != nil {
+		usage := r.llmClient.Usage()
+		if usage != nil {
+			total := usage.Total()
+			suiteReport.TokenUsage = &reporter.TokenUsage{
+				InputTokens:   total.InputTokens,
+				OutputTokens:  total.OutputTokens,
+				TotalTokens:   total.InputTokens + total.OutputTokens,
+				Requests:      usage.Requests,
+				EstimatedCost: usage.EstimatedCost(r.llmClient.Model()),
+			}
+		}
+	}
+
 	r.reporter.EndSuite(suiteReport)
 	return suiteReport
 }
@@ -214,7 +222,13 @@ func (r *Runner) RunSpec(ctx context.Context, testSpec *spec.TestSpec, suiteSpec
 		testName, timeout, testSpec.Metadata.Group, testSpec.Metadata.Fixtures)
 
 	// --- Pre-test hooks run with their own timeout (not the spec timeout) ---
-	hookCtx, hookCancel := context.WithTimeout(ctx, 15*time.Minute)
+	hookTimeout := 15 * time.Minute
+	if testSpec.Metadata.Group != "" {
+		if gs, ok := groups[testSpec.Metadata.Group]; ok && gs.Metadata.Timeout > 0 {
+			hookTimeout = gs.Metadata.Timeout
+		}
+	}
+	hookCtx, hookCancel := context.WithTimeout(ctx, hookTimeout)
 	defer hookCancel()
 
 	// --- Suite Pre-Test hooks ---
@@ -285,40 +299,30 @@ func (r *Runner) RunSpec(ctx context.Context, testSpec *spec.TestSpec, suiteSpec
 			groupSpec = groups[testSpec.Metadata.Group]
 		}
 
-		// Check cache
-		if !r.noCache {
-			if cached, ok := memoryAgent.GetCachedPlan(testSpec); ok {
-				plan = cached
-				log.Infof("RUN", "Using cached plan for %q", testName)
-			}
-		}
+		specHash := memoryAgent.ComputeSpecHash(testSpec)
 
-		// Generate plan if not cached
-		if plan == nil {
-			log.Infof("RUN", "Generating new plan for %q", testName)
-			var err error
-			plan, err = plannerAgent.Plan(specCtx, testSpec, suiteSpec, groupSpec, fixtureDefs, r.extraContext)
-			if err != nil {
-				log.Errorf("RUN", "Planning FAILED for %q: %v", testName, err)
-				testReport.Status = reporter.TestFailed
-				testReport.Error = fmt.Sprintf("planning: %s", err)
-				r.reporter.EndSpec(testReport)
-				return testReport
-			}
-			log.Infof("RUN", "Plan generated for %q — %d phases", testName, len(plan.Phases))
-			// Cache the plan
-			memoryAgent.SavePlan(testSpec, plan)
+		// Generate or retrieve cached plan (planner checks cache internally)
+		if r.noCache {
+			specHash = ""
 		}
+		log.Infof("RUN", "Planning %q (hash: %s)", testName, specHash)
+		var err error
+		plan, err = plannerAgent.Plan(specCtx, specHash, testSpec, suiteSpec, groupSpec, fixtureDefs, r.extraContext)
+		if err != nil {
+			log.Errorf("RUN", "Planning FAILED for %q: %v", testName, err)
+			testReport.Status = reporter.TestFailed
+			testReport.Error = fmt.Sprintf("planning: %s", err)
+			r.reporter.EndSpec(testReport)
+			return testReport
+		}
+		log.Infof("RUN", "Plan ready for %q — %d phases", testName, len(plan.Phases))
 
-		// Report plan
+		// Log plan summary (don't report steps as passed — execution hasn't started)
+		totalSteps := 0
 		for _, phase := range plan.Phases {
-			for i, step := range phase.Steps {
-				r.reporter.StepResult(phase.Name, i, step.Description, reporter.StepOutcome{
-					Status: reporter.StepPassed,
-					Output: fmt.Sprintf("[PLAN] %s → %s", step.Description, step.ToolName),
-				})
-			}
+			totalSteps += len(phase.Steps)
 		}
+		log.Infof("RUN", "Plan for %q: %d phases, %d steps", testName, len(plan.Phases), totalSteps)
 
 		// Filter plan phases based on --skip-phases / --only-phases
 		if len(r.skipPhases) > 0 || len(r.onlyPhases) > 0 {
@@ -343,13 +347,9 @@ func (r *Runner) RunSpec(ctx context.Context, testSpec *spec.TestSpec, suiteSpec
 		// --- Auto-Pilot Execution ---
 		log.Infof("RUN", "Starting auto-pilot execution for %q", testName)
 		result, err := executorAgent.Execute(specCtx, plan, r.extraContext, true)
-		if err != nil {
-			log.Errorf("RUN", "Execution error for %q: %v", testName, err)
-			testReport.Status = reporter.TestFailed
-			testReport.Error = fmt.Sprintf("execution: %s", err)
-			testReport.Diagnosis = r.diagnoseFailure(specCtx, testName, testReport.Error)
-		} else if result != nil {
-			// Convert execution result to step reports
+
+		// Always process step results (even on error — result contains steps that ran before failure)
+		if result != nil {
 			for _, pr := range result.PhaseResults {
 				for i, sr := range pr.StepResults {
 					outcome := reporter.StepOutcome{
@@ -375,6 +375,15 @@ func (r *Runner) RunSpec(ctx context.Context, testSpec *spec.TestSpec, suiteSpec
 					})
 				}
 			}
+		}
+
+		if err != nil {
+			log.Errorf("RUN", "Execution error for %q: %v", testName, err)
+			testReport.Status = reporter.TestFailed
+			if testReport.Error == "" {
+				testReport.Error = fmt.Sprintf("execution: %s", err)
+			}
+			testReport.Diagnosis = r.diagnoseFailure(specCtx, testName, testReport.Error)
 		}
 
 		// Diagnose if execution completed but had step failures
@@ -412,6 +421,12 @@ func (r *Runner) RunSpec(ctx context.Context, testSpec *spec.TestSpec, suiteSpec
 func (r *Runner) diagnoseFailure(ctx context.Context, testName string, failureError string) string {
 	if r.dryRun {
 		return ""
+	}
+
+	if strings.Contains(failureError, "timed out") || strings.Contains(failureError, "exceeded") ||
+		strings.Contains(failureError, "context deadline") || strings.Contains(failureError, "consecutive iterations") {
+		log.Infof("DEBUG", "Skipping auto-debug for %q — failure is a timeout/limit error, tools will likely hang too", testName)
+		return fmt.Sprintf("Auto-debug skipped: failure was due to timeout or iteration limit (%s)", failureError)
 	}
 
 	log.Infof("DEBUG", "Starting auto-debug for %q — error: %s", testName, failureError)
@@ -453,7 +468,8 @@ After investigating, provide your diagnosis as plain text (not JSON).`, testName
 				},
 			},
 		},
-		Tools: llmTools,
+		Tools:         llmTools,
+		MaxIterations: 10,
 	}
 
 	toolHandler := r.toolRegistry.HandleToolCall(diagCtx)
@@ -659,4 +675,120 @@ For each condition, use the available tools to verify it. If ANY condition fails
 		return fmt.Errorf("%s: %d check(s) failed", phaseName, failed)
 	}
 	return nil
+}
+
+// runSpecsSequential executes specs one at a time with retry and dependency support.
+func (r *Runner) runSpecsSequential(ctx context.Context, suite *spec.Suite, suiteReport *reporter.SuiteReport, preSuiteFailed bool) {
+	passed := make(map[string]bool) // track which spec names passed for dependency checks
+
+	for _, testSpec := range suite.Tests {
+		if preSuiteFailed {
+			testReport := &reporter.TestReport{
+				Name:     testSpec.TestName(),
+				FilePath: testSpec.FilePath,
+				Status:   reporter.TestSkipped,
+				Error:    "skipped: pre-suite hook failed",
+			}
+			suiteReport.Tests = append(suiteReport.Tests, testReport)
+			suiteReport.Skipped++
+			r.reporter.StartSpec(testSpec.TestName())
+			r.reporter.EndSpec(testReport)
+			continue
+		}
+
+		// Check dependencies
+		if unmet := checkDependencies(testSpec, passed); unmet != "" {
+			testReport := &reporter.TestReport{
+				Name:     testSpec.TestName(),
+				FilePath: testSpec.FilePath,
+				Status:   reporter.TestSkipped,
+				Error:    fmt.Sprintf("skipped: dependency %q did not pass", unmet),
+			}
+			suiteReport.Tests = append(suiteReport.Tests, testReport)
+			suiteReport.Skipped++
+			r.reporter.StartSpec(testSpec.TestName())
+			r.reporter.EndSpec(testReport)
+			log.Warnf("RUN", "Skipping %q — dependency %q not met", testSpec.Name, unmet)
+			continue
+		}
+
+		testReport := r.runSpecWithRetries(ctx, testSpec, suite.SuiteSpec, suite.Groups)
+		suiteReport.Tests = append(suiteReport.Tests, testReport)
+		r.tallyReport(suiteReport, testReport)
+
+		if testReport.Status == reporter.TestPassed {
+			passed[testSpec.Name] = true
+		}
+	}
+}
+
+// runSpecsParallel executes specs concurrently up to r.parallel workers.
+func (r *Runner) runSpecsParallel(ctx context.Context, suite *spec.Suite, suiteReport *reporter.SuiteReport, preSuiteFailed bool) {
+	log.Infof("RUN", "Running %d specs with parallelism=%d", len(suite.Tests), r.parallel)
+
+	sem := make(chan struct{}, r.parallel)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	results := make([]*reporter.TestReport, len(suite.Tests))
+
+	for i, testSpec := range suite.Tests {
+		wg.Add(1)
+		go func(idx int, ts *spec.TestSpec) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			testReport := r.runSpecWithRetries(ctx, ts, suite.SuiteSpec, suite.Groups)
+
+			mu.Lock()
+			results[idx] = testReport
+			mu.Unlock()
+		}(i, testSpec)
+	}
+
+	wg.Wait()
+
+	for _, testReport := range results {
+		suiteReport.Tests = append(suiteReport.Tests, testReport)
+		r.tallyReport(suiteReport, testReport)
+	}
+}
+
+// runSpecWithRetries runs a spec, retrying up to r.retries times on failure.
+func (r *Runner) runSpecWithRetries(ctx context.Context, testSpec *spec.TestSpec, suiteSpec *spec.SuiteSpec, groups map[string]*spec.GroupSpec) *reporter.TestReport {
+	testReport := r.RunSpec(ctx, testSpec, suiteSpec, groups)
+
+	for attempt := 1; attempt <= r.retries && testReport.Status == reporter.TestFailed; attempt++ {
+		log.Warnf("RUN", "Spec %q failed (attempt %d/%d), retrying...", testSpec.TestName(), attempt, r.retries+1)
+		testReport = r.RunSpec(ctx, testSpec, suiteSpec, groups)
+		testReport.Retries = attempt
+		if testReport.Status == reporter.TestPassed {
+			testReport.Flaky = true
+			log.Infof("RUN", "Spec %q passed on retry %d (flaky)", testSpec.TestName(), attempt)
+		}
+	}
+
+	return testReport
+}
+
+// checkDependencies returns the name of the first unmet dependency, or "" if all are met.
+func checkDependencies(testSpec *spec.TestSpec, passed map[string]bool) string {
+	for _, dep := range testSpec.Metadata.DependsOn {
+		if !passed[dep] {
+			return dep
+		}
+	}
+	return ""
+}
+
+func (r *Runner) tallyReport(suiteReport *reporter.SuiteReport, testReport *reporter.TestReport) {
+	switch testReport.Status {
+	case reporter.TestPassed:
+		suiteReport.Passed++
+	case reporter.TestFailed:
+		suiteReport.Failed++
+	case reporter.TestSkipped:
+		suiteReport.Skipped++
+	}
 }

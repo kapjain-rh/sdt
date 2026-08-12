@@ -72,6 +72,24 @@ func (c *ConsoleReporter) EndSuite(report *SuiteReport) {
 	fmt.Println("=== SUMMARY")
 	fmt.Printf("  Passed:  %d | Failed: %d | Skipped: %d\n", report.Passed, report.Failed, report.Skipped)
 	fmt.Printf("  Duration: %s\n", formatDuration(report.Duration))
+
+	// Show flaky count if any
+	flakyCount := 0
+	for _, t := range report.Tests {
+		if t.Flaky {
+			flakyCount++
+		}
+	}
+	if flakyCount > 0 {
+		fmt.Printf("  Flaky:   %d spec(s) passed on retry\n", flakyCount)
+	}
+
+	if report.TokenUsage != nil && report.TokenUsage.TotalTokens > 0 {
+		fmt.Printf("  Tokens:  %d input + %d output = %d total (%d requests, ~$%.2f)\n",
+			report.TokenUsage.InputTokens, report.TokenUsage.OutputTokens,
+			report.TokenUsage.TotalTokens, report.TokenUsage.Requests,
+			report.TokenUsage.EstimatedCost)
+	}
 }
 
 func (c *ConsoleReporter) Finalize(report *SuiteReport) error {

@@ -59,17 +59,29 @@ type TestReport struct {
 	Diagnosis string            // Auto-debug analysis when test fails
 	Metadata  map[string]string // Spec metadata (author, priority, caseID, etc.)
 	CaseID    string            // Kiwi TCMS case ID for reporting
+	Retries   int               // Number of retries needed (0 = passed first try)
+	Flaky     bool              // True if spec failed initially but passed on retry
+}
+
+// TokenUsage tracks LLM token consumption and estimated cost.
+type TokenUsage struct {
+	InputTokens   int     `json:"input_tokens"`
+	OutputTokens  int     `json:"output_tokens"`
+	TotalTokens   int     `json:"total_tokens"`
+	EstimatedCost float64 `json:"estimated_cost"`
+	Requests      int     `json:"requests"`
 }
 
 // SuiteReport holds the full report for an entire suite execution.
 type SuiteReport struct {
-	Name     string
-	Dir      string
-	Tests    []*TestReport
-	Duration time.Duration
-	Passed   int
-	Failed   int
-	Skipped  int
+	Name       string
+	Dir        string
+	Tests      []*TestReport
+	Duration   time.Duration
+	Passed     int
+	Failed     int
+	Skipped    int
+	TokenUsage *TokenUsage
 }
 
 // Reporter is the interface for outputting test results.

@@ -20,14 +20,16 @@ const (
 
 // Metadata holds structured metadata parsed from a spec's ## Metadata section.
 type Metadata struct {
-	Author   string
-	Priority string // Critical, High, Medium, Low
-	CaseID   string // Kiwi TCMS / Jira case ID
-	Labels   []string
-	Timeout  time.Duration
-	Group    string   // Group name for group-level hooks (e.g., "with-loki")
-	Fixtures []string // Fixture names to load (e.g., ["flowcollector-default", "test-traffic"])
-	Status   string   // "draft" or "approved" (empty treated as "approved" for backward compat)
+	Author    string
+	Priority  string // Critical, High, Medium, Low
+	CaseID    string // Kiwi TCMS / Jira case ID
+	Labels    []string
+	Timeout   time.Duration
+	Group     string   // Group name for group-level hooks (e.g., "with-loki")
+	Fixtures  []string // Fixture names to load (e.g., ["flowcollector-default", "test-traffic"])
+	Status    string   // "draft" or "approved" (empty treated as "approved" for backward compat)
+	DependsOn []string // Names of specs that must pass before this one runs
+	BaseSpec  string   // Path to a base spec to inherit sections from
 }
 
 // StepDef is a single step parsed from markdown.

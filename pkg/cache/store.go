@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Store manages caching of plans and generated content.
@@ -92,6 +93,12 @@ func (s *Store) ComputeHash(content []byte) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// ComputeContentHash computes a SHA256 hash of a string and returns it as a hex string.
+func ComputeContentHash(content string) string {
+	hash := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(hash[:])
+}
+
 // InvalidatePlan removes a cached plan by spec hash.
 func (s *Store) InvalidatePlan(specHash string) error {
 	path := filepath.Join(s.cacheDir, "plans", specHash+".json")
@@ -137,6 +144,28 @@ func (s *Store) GetCacheSize() (int64, error) {
 // ClearCache removes all cached files.
 func (s *Store) ClearCache() error {
 	return os.RemoveAll(s.cacheDir)
+}
+
+// ComputeSpecHashFromFile computes a SHA256 hash of the spec file content.
+// If the file cannot be read, it falls back to hashing the provided fallback fields.
+func ComputeSpecHashFromFile(filePath string, fallbackFields ...string) string {
+	if content, err := os.ReadFile(filePath); err == nil {
+		hash := sha256.Sum256(content)
+		return hex.EncodeToString(hash[:])
+	}
+	combined := strings.Join(fallbackFields, "|")
+	hash := sha256.Sum256([]byte(combined))
+	return hex.EncodeToString(hash[:])
+}
+
+// ComputeHookHash computes a SHA256 hash of hook phase name and step texts.
+func ComputeHookHash(phaseName string, stepTexts []string) string {
+	combined := phaseName
+	for _, s := range stepTexts {
+		combined += "|" + s
+	}
+	hash := sha256.Sum256([]byte(combined))
+	return "hook-" + hex.EncodeToString(hash[:])
 }
 
 // MarshalJSON marshals an object to JSON bytes for caching.

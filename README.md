@@ -621,6 +621,86 @@ Deploy the test database using fixture `test-database`.
 | `sdt tcms status` | Check TCMS linkage |
 | `sdt tcms import` | Import test cases from TCMS |
 
+## Web UI (SDT-TCMS)
+
+SDT includes a web-based test management UI for browsing specs, fixtures, groups, suites, tools, and cached execution plans/results.
+
+### Bundled UI (recommended)
+
+The UI can be bundled directly into the `sdt` binary. A single command serves both the API and the web interface:
+
+```bash
+# From within your project directory
+sdt serve --ui
+
+# Or specify a project directory and port
+sdt serve --ui --project-dir /path/to/my-project --port 8090
+```
+
+Open `http://localhost:8090` in your browser. The `--ui` flag serves the bundled frontend alongside the API — no separate frontend process needed.
+
+**Building the bundled UI from source:**
+
+```bash
+# Build the frontend static export and embed it into the Go binary
+make build-all
+
+# Or step by step:
+make build-ui    # exports frontend to pkg/api/ui/dist/
+make build       # compiles Go binary with embedded UI
+```
+
+This requires Node.js 18+. The frontend source lives in `ui/` within this repo.
+
+### Development mode
+
+For frontend development, run the API and frontend dev server separately:
+
+**1. Start the API server:**
+
+```bash
+sdt serve --project-dir /path/to/my-project --port 8090
+```
+
+**2. Start the frontend dev server:**
+
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+The frontend runs on `http://localhost:3000` and proxies API requests to the backend on port 8090. To use a different backend port, set `SDT_API_PORT`:
+
+```bash
+SDT_API_PORT=9090 npm run dev
+```
+
+### Configuring the backend URL
+
+The UI sidebar includes a **Backend** field where you can point the frontend to a different API server (e.g., `http://localhost:9090/api`). This is saved in your browser's localStorage and persists across sessions. Leave it blank to use the default (proxy in dev mode, same origin when bundled).
+
+### What the UI shows
+
+| Page | Description |
+|---|---|
+| **Dashboard** | Overview stats — total cases, plans, runs |
+| **Suite** | Suite-level hooks (`_suite.md`) — pre-suite, pre-test, post-test, post-suite |
+| **Groups** | Group hooks (`_group_*.md`) with associated specs |
+| **Test Cases** | IDE-style spec editor with metadata, setup/steps/verify/cleanup sections. Includes a **Cache** tab showing the LLM-generated execution plan and past run results for each spec |
+| **Fixtures** | YAML fixture editor with templates, parameters, and lifecycle (create/ready/cleanup) |
+| **Test Plans** | Organize cases into plans |
+| **Test Runs** | Execute plans, track results with interactive execution mode |
+| **Tools** | Manage YAML tool definitions (draft → test → approve) |
+| **MCP Servers** | Connect to MCP servers, discover and test tools |
+
+### Cache visualization
+
+When viewing a test case, the **Cache** tab shows:
+
+- **Execution Plan** — the LLM-generated plan with phases, steps, tool mappings, and parameters. This is the plan the agent follows during execution — cached by spec content hash so the LLM is only called once per spec version.
+- **Results** — past execution results with per-phase and per-step status (PASSED/FAILED/SKIPPED), error messages, duration, and tool output. Multiple runs are shown with a selector.
+
 ## Kiwi TCMS Integration
 
 SDT integrates with [Kiwi TCMS](https://kiwitcms.org) for test case management:
@@ -653,6 +733,8 @@ make test
 | Command | Description |
 |---|---|
 | `make build` | Build binary to `bin/sdt` |
+| `make build-ui` | Build the frontend static export into `pkg/api/ui/dist/` |
+| `make build-all` | Build frontend + Go binary with embedded UI |
 | `make install` | Install to `$GOPATH/bin` |
 | `make test` | Run all tests (verbose, no caching) |
 | `make lint` | Run `go vet` |

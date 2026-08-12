@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -96,14 +99,25 @@ type MCPServerConfig struct {
 	Command string            `yaml:"command"`
 	Args    []string          `yaml:"args,omitempty"`
 	Env     map[string]string `yaml:"env,omitempty"`
+	Dir     string            `yaml:"-"` // Working directory for the server process
 }
 
 // NewClient starts an MCP server subprocess and performs the initialize handshake.
 func NewClient(ctx context.Context, name string, cfg MCPServerConfig) (*Client, error) {
-	cmd := exec.CommandContext(ctx, cfg.Command, cfg.Args...)
+	command := cfg.Command
+	if cfg.Dir != "" && (strings.HasPrefix(command, "./") || strings.HasPrefix(command, "../")) {
+		command = filepath.Join(cfg.Dir, command)
+	}
+	cmd := exec.CommandContext(ctx, command, cfg.Args...)
+	if cfg.Dir != "" {
+		cmd.Dir = cfg.Dir
+	}
 
-	for k, v := range cfg.Env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+	if len(cfg.Env) > 0 {
+		cmd.Env = os.Environ()
+		for k, v := range cfg.Env {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, os.ExpandEnv(v)))
+		}
 	}
 
 	stdin, err := cmd.StdinPipe()

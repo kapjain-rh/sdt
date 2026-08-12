@@ -3,13 +3,25 @@ MODULE = github.com/sdt-project/sdt
 BUILD_DIR = bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS = -ldflags "-X main.version=$(VERSION)"
+UI_SRC = ui
 
-.PHONY: all build test lint clean run validate list review install
+.PHONY: all build test lint clean run validate list review install build-ui
 
 all: build
 
 build:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY) ./cmd/sdt
+
+build-ui:
+	@echo "Building frontend static export..."
+	cd $(UI_SRC) && npm run build:static
+	@echo "Copying to embed directory..."
+	rm -rf pkg/api/ui/dist
+	mkdir -p pkg/api/ui/dist
+	cp -r $(UI_SRC)/out/* pkg/api/ui/dist/
+	@echo "UI built. Run 'make build' to embed into binary."
+
+build-all: build-ui build
 
 install:
 	go install $(LDFLAGS) ./cmd/sdt

@@ -1,0 +1,9 @@
+project: openshift-netobserv
+description: "Network Observability operator E2E tests on OpenShift"
+specsDir: specs
+fixturesDir: fixtures
+toolsDir: tools
+context: |
+  Target system is an OpenShift cluster.
+  Use oc commands for cluster operations.
+  Templates are in the templates/ directory.
